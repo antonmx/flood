@@ -5,6 +5,7 @@
 struct GlobalVariables {
   
   Path command;               ///< Command name as it was invoked.
+  bool interactive;
   std::vector<Path> inlist;        ///< List of all input images.
   Path out_filled;       ///< The mask for the output file names.
   Path out_inverted;
@@ -37,6 +38,7 @@ struct GlobalVariables {
   bool stopProcessing;
   
   GlobalVariables() :
+    interactive(false),
     beverbose(false),
 //  nextdim(1),
     run_threads(nof_threads()),
@@ -110,8 +112,15 @@ void * in_write_thread (void * _thread_args);
 int allocateBigVolume( const Shape3D & shape, Volume8U & data );
 
 void * in_zeroing_thread (void * _thread_args);
+void * in_wiping_thread (void * _thread_args);
 
 
+struct ApplyArgs {
+  bool invert;
+  int threadnum;  
+};
+
+void * in_apply_thread (void * _thread_args);
 
 
 
@@ -122,14 +131,23 @@ void * in_zeroing_thread (void * _thread_args);
 /// \CLARGS
 struct clargs {
   
+  poptmx::OptionTable proc_table;
+  poptmx::OptionTable save_table;
+  poptmx::OptionTable color_table;
+  
   poptmx::OptionTable table;
   
   /// \CLARGSF
   clargs(int argc, char *argv[]);
   
+  static bool check_proc( poptmx::OptionTable & tab );
+  static bool check_save( poptmx::OptionTable & tab );
+  
 };
 
 
+
+bool string_to_argv(char const * str, int * argc_p, char *** argv_p);
 
 
 void sig1handler(int signum);

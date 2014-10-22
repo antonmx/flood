@@ -29,11 +29,15 @@
 
 #include "tools.h"
 #include "tools3d.h"
+#include <blitz/rand-tt800.h>
 
 #include <pthread.h>
 #include <queue>
 #include <algorithm>
 #include <unistd.h>
+
+#include<readline/readline.h>
+#include<readline/history.h>
 
 using namespace std;
 using namespace blitz;
@@ -162,9 +166,9 @@ private:
   static pthread_cond_t check_again;
   static pthread_mutex_t proglock;
   
-  ProgressBar bar;
-  
 public:
+  
+  ProgressBar bar;
   
   ProcDistributor() {
       bar=ProgressBar( g.beverbose , "processing volume", g.ivol.size() );
@@ -174,9 +178,9 @@ public:
       
   bool distribute( Point3D * pnt ) {
     
-    bool ret = true;
-    
     pthread_mutex_lock( & picklock );
+    
+    bool ret = true;
     
     while ( schedule.empty() && ! inwork.empty() )
       pthread_cond_wait(&check_again, &picklock);
@@ -312,12 +316,15 @@ void * in_proc_thread (void * _thread_args) {
   
   Point3D pnt; 
   while ( dist->distribute(&pnt) && ! g.stopProcessing )    
-    dist->collect( pnt, checkMe(pnt) );    
+    dist->collect( pnt, checkMe(pnt) ); 
+  
+  if (g.beverbose)
+    prdn("Processing thread finished.");
     
 }
 
 
-void zero_wvol() {
+void operate_wvol( void *(*start_routine) (void *) ) {
   
   //g.wvol = 0; // can be time consuming especially if mmaped. 
   // instead I do it in multithreading:
@@ -325,11 +332,28 @@ void zero_wvol() {
   vector<pthread_t> threads(g.run_threads);
   
   for (int ith = 0 ; ith < g.run_threads ; ith++)
-    if ( pthread_create( & threads[ith], NULL, in_zeroing_thread, (void*) ith ) ) // dirty hack with (void*)
+    if ( pthread_create( & threads[ith], NULL, start_routine, (void*) ith ) ) // dirty hack with (void*)
       throw_error("Zeroing volume", "Can't create thread.");
   for (int ith = 0 ; ith < threads.size() ; ith++)
     pthread_join( threads[ith], 0);
   
+}
+
+
+void apply_mask(bool invert) {
+  
+  vector<pthread_t> threads(g.run_threads);
+  vector<ApplyArgs> args(g.run_threads);
+  
+  for (int ith = 0 ; ith < g.run_threads ; ith++) {
+    args[ith].invert = invert;
+    args[ith].threadnum = ith;
+    if ( pthread_create( & threads[ith], NULL, in_apply_thread, &(args[ith]) ) ) // dirty hack with (void*)
+      throw_error("Apply mask", "Can't create thread.");
+  }
+  for (int ith = 0 ; ith < threads.size() ; ith++)
+    pthread_join( threads[ith], 0);
+   
 }
 
 
@@ -392,8 +416,52 @@ void prepare_shift_volumes() {
 
 
 
-void process() {
+void read_input() {
   
+  vector<pthread_t> threads(g.run_threads);  
+  
+  // Read images to the array.
+  ReadWriteDistributor rwdist;
+  rwdist.PrepareForRead();
+  for (int ith = 0 ; ith < g.run_threads ; ith++)
+    if ( pthread_create( & threads[ith], NULL, in_read_thread, &rwdist ) )
+      throw_error("Read volume", "Can't create thread.");
+  for (int ith = 0 ; ith < threads.size() ; ith++)
+    pthread_join( threads[ith], 0);
+  
+}
+
+
+void save_results() {
+  
+  vector<pthread_t> threads(g.run_threads);   
+  ReadWriteDistributor rwdist;
+  rwdist.PrepareForWrite();
+  
+  for (int ith = 0 ; ith < g.run_threads ; ith++)
+    if ( pthread_create( & threads[ith], NULL, in_write_thread, &rwdist ) )
+      throw_error("Write volume", "Can't create thread.");
+    for (int ith = 0 ; ith < threads.size() ; ith++)
+      pthread_join( threads[ith], 0);
+  
+}
+
+
+ProcDistributor procdist;
+vector<pthread_t> proc_threads;
+
+
+void start_process() {
+  
+  if (proc_threads.size())
+    throw_error("Process data", "Another process is already running.");
+  proc_threads.resize(g.run_threads);
+  
+  g.cross_point = g.start.front();
+  
+  for ( int cpnt=0 ; cpnt < g.start.size() ; cpnt++ )
+    if ( ! g.start[cpnt].inVolume( g.ivol.shape() ) )
+      throw_error("Process data", "At least one starting point is outside the volume.");
   
   for ( int cpnt=0 ; cpnt < g.stop.size() ; cpnt++ ) {
     int rs2 = g.stop[cpnt].radius * g.stop[cpnt].radius;
@@ -406,20 +474,37 @@ void process() {
         }
   }   
   
-  vector<pthread_t> threads(g.run_threads);
-  
   prdn(0);
   // process
-  ProcDistributor procdist;
+  procdist = ProcDistributor();
   for (int ith = 0 ; ith < g.run_threads ; ith++)
-    if ( pthread_create( & threads[ith], NULL, in_proc_thread, &procdist ) )
+    if ( pthread_create( & proc_threads[ith], NULL, in_proc_thread, &procdist ) )
       throw_error("Process data", "Can't create thread.");
-  for (int ith = 0 ; ith < threads.size() ; ith++)
-    pthread_join( threads[ith], 0);
-  procdist.finilizeProgressBar();
-  prdn(1);
   
 }
+
+void update_process() {
+  if ( proc_threads.empty() )
+    throw_error("Process data", "No process are running to finish.");
+  printf( "%s", procdist.bar.print_line().c_str() );
+}
+
+void finish_process() {
+  if ( proc_threads.empty() )
+    throw_error("Process data", "No process are running to finish.");
+  for (int ith = 0 ; ith < proc_threads.size() ; ith++)
+    pthread_join( proc_threads[ith], 0);
+  procdist.finilizeProgressBar();
+  prdn(1);
+  proc_threads.clear();
+}
+
+void process() {
+  start_process();
+  finish_process();  
+}
+
+
 
 
 
@@ -448,44 +533,156 @@ int main(int argc, char *argv[]) {
   const int nx=imgsh(0), ny=imgsh(1), nz=g.inlist.size();
   const Shape3D vshape(nx, ny, nz);
   
-  for ( int cpnt=0 ; cpnt < g.start.size() ; cpnt++ )
-    if ( ! g.start[cpnt].inVolume( vshape ) )
-      exit_on_error(g.command, "At least one starting point is outside the volume.");
-  
   prepare_shift_volumes();
       
   const int imapfile = allocateBigVolume( vshape, g.ivol);
   const int wmapfile = allocateBigVolume( vshape, g.wvol);
   
   
-  vector<pthread_t> threads(g.run_threads);  
-  ReadWriteDistributor rwdist;
+  read_input();
   
-  // Read images to the array.
-  rwdist.PrepareForRead();
-  for (int ith = 0 ; ith < g.run_threads ; ith++)
-    if ( pthread_create( & threads[ith], NULL, in_read_thread, &rwdist ) )
-      throw_error("Read volume", "Can't create thread.");
-  for (int ith = 0 ; ith < threads.size() ; ith++)
-    pthread_join( threads[ith], 0);
+  operate_wvol( in_zeroing_thread ); 
 
   
-  process();
-  
+  if ( g.interactive ) {
+    
+    const bool beverbose = g.beverbose;
+    char* lns;
+    char** aargv;
+    int aargc;
 
-  // Write array images to the images.
-  rwdist.PrepareForWrite();
-  for (int ith = 0 ; ith < g.run_threads ; ith++)
-    if ( pthread_create( & threads[ith], NULL, in_write_thread, &rwdist ) )
-      throw_error("Write volume", "Can't create thread.");
-  for (int ith = 0 ; ith < threads.size() ; ith++)
-    pthread_join( threads[ith], 0);
-  
+    while ( lns = readline("enter a command > ") ) { 
+      
+      if (lns && *lns)
+        add_history (lns);
+      
+      try {
+      
+        if ( string_to_argv(lns, &aargc, &aargv )  || ! aargc ) {
+        
+          if ( ! proc_threads.size() )
+            printf("  No process is running.\n");
+          else
+            update_process();
+            
+          printf ( "  Possible commands are: start, stop, apply, save, slice.\n" );
+      
+        } else if ( string(aargv[0]) == "save" ) {
+          
+          if ( proc_threads.size() )
+            throw_error("save", "A process is already running. Stop it first.");
+        
+          poptmx::OptionTable table = args.save_table; 
+          if ( table.parse(aargc, aargv)  &&  clargs::check_save(table) )
+            save_results();
+          else
+            table.usage();        
+        
+        } else if ( string(aargv[0]) == "apply" ) {
+          
+          if ( proc_threads.size() )
+            throw_error("apply", "A process is already running. Stop it first.");
+        
+          g.color=0;
+          bool invert(false);
+          poptmx::OptionTable table = args.color_table; 
+          table.add(poptmx::OPTION, &invert, 'i', "invert", "Inverts mask", "");
+          table.parse(aargc, aargv);
+          
+          apply_mask(invert);
+          
+            
+        } else if ( string(aargv[0]) == "reset" ) { 
+          
+          if ( proc_threads.size() )
+            throw_error("reset", "A process is already running. Stop it first.");
+         
+          operate_wvol( in_zeroing_thread );          
+          
+        } else if ( string(aargv[0]) == "start" ) { 
+          
+          if ( proc_threads.size() )
+            throw_error("start", "A process is already running. Stop it first.");
+                    
+          g.radius = 0;
+          g.radiusM = 0;
+          g.color = 0;
+          g.minval = -1;
+          g.maxval = -1;
+          g.minggrad = -1; 
+          g.maxggrad = -1;
+          g.stopProcessing = false;
+          g.start.clear();
+          g.stop.clear();        
+          
+          poptmx::OptionTable table = args.proc_table; 
+          table.parse(aargc, aargv);   
+          clargs::check_proc(table);
+          
+          operate_wvol( in_wiping_thread ); 
+          prepare_shift_volumes();
+          
+          g.beverbose = false;
+          start_process();  
+        
+        } else if ( string(aargv[0]) == "stop" ) { 
+
+          g.beverbose = beverbose;
+          g.stopProcessing = true;
+          finish_process();
+        
+        } else if ( string(aargv[0]) == "slice" ) {        
+        
+          Point3D cross;
+          bool original=false;
+          poptmx::OptionTable table; 
+          table
+            .add(poptmx::ARGUMENT, &cross, "point", "slices through this point", "")
+            .add(poptmx::OPTION, &original, 'o', "original",
+                "Save slices through the data volume, not mask.", "");
+          
+          if ( ! cross.inVolume(vshape) )
+            cross = g.cross_point;
+          
+          table.parse(aargc, aargv);
+        
+          const Volume8U & voltosave = original ? g.ivol : g.wvol;
+          Map8U yz( voltosave.shape()(2), voltosave.shape()(1) );
+          yz = voltosave( cross.x(), Range::all(), Range::all() ).transpose(secondDim, firstDim) ;
+          SaveImage(".yz.tif", yz);
+          Map8U xz( voltosave.shape()(2), voltosave.shape()(0) );
+          xz = voltosave( Range::all(), cross.y(), Range::all() ).transpose(secondDim, firstDim) ;
+          SaveImage(".xz.tif", xz);
+          Map8U xy = voltosave( Range::all(), Range::all(), cross.z() ).copy();
+          SaveImage(".xy.tif", xy);
+          
+
+        } else {
+        
+          printf ( "  Unknown command \"%s\". Possible commands are: start, stop, apply, save, slice.\n", aargv[0] );
+        
+        }
+        
+      }
+      catch (FloodErr err) {}
+      catch (poptmx::Err err) {}
+      
+      free(lns); 
+      free(aargv);
+      
+    }
+     
+  } else {
+      
+    prepare_shift_volumes();
+    process();  
+    save_results();
+     
+  }
+      
   if (imapfile)
     close(imapfile);
   if (wmapfile)
     close(wmapfile);
-  
-
-  
+    
 }

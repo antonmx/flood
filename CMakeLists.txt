@@ -4,6 +4,8 @@ project(flood)
 
 set(VERSION 0.1.0)
 
+SET( CMAKE_MODULE_PATH ${flood_SOURCE_DIR})
+
 add_custom_target(dist
     COMMAND git archive --prefix=${PROJECT_NAME}.${VERSION}/ HEAD
         | bzip2 > ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.${VERSION}.tar.bz2
@@ -25,6 +27,8 @@ FIND_PACKAGE(ImageMagick COMPONENTS MagickCore REQUIRED)
 include_directories("${ImageMagick_INCLUDE_DIRS}")
 
 FIND_PACKAGE(TIFF REQUIRED)
+
+FIND_PACKAGE(Readline REQUIRED)
 
 find_library(HAVE_POPTMX pthread)
 if( "${HAVE_PTHREAD}" MATCHES "HAVE_PTHREAD-NOTFOUND" )
@@ -61,6 +65,7 @@ target_link_libraries(flood3d
   tiff
   poptmx
   pthread
+  readline
 )
 
 install(TARGETS flood3d RUNTIME DESTINATION bin)

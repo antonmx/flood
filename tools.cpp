@@ -87,17 +87,7 @@ void prdn( const std::string & msg ) {
 }
 
 
-/// \brief Constructor.
-///
-/// @param _terr Sets CtasErr::terr
-/// @param mod   Sets CtasErr::module
-/// @param msg   Sets CtasErr::message
-///
-FloodErr::FloodErr(ErrTp _terr, const string & mod, const string & msg){
-  terr = _terr;
-  module = mod;
-  message = msg;
-}
+
 
 /// \brief Prints the error into the standard error stream.
 void
@@ -125,7 +115,7 @@ FloodErr::type() const {
 
 void
 throw_error(const string & mod, const string & msg) {
-  FloodErr err(FloodErr::ERR, mod, msg);
+  FloodErr err(mod, msg, FloodErr::ERR);
   err.report();
   throw err;
 }
@@ -137,14 +127,14 @@ throw_bug(const string & mod){
 
 FloodErr
 warn(const string & mod, const string & msg){
-  FloodErr err(FloodErr::WARN, mod, msg);
+  FloodErr err(mod, msg, FloodErr::WARN);
   err.report();
   return err;
 }
 
 void
 exit_on_error(const string & mod, const string & msg){
-  FloodErr err(FloodErr::FATAL, mod, msg);
+  FloodErr err(mod, msg, FloodErr::FATAL);
   err.report();
   cerr << "!!! EXITING ON ERROR !!!" << endl;
   exit(1);
@@ -407,52 +397,38 @@ ProgressBar::ProgressBar(bool _showme, const string & _message, long int _steps)
   steps(_steps)
 {
 
-  if ( ! showme ) return;
-
   step = 0;
   waswidth = 0;
   reservedChs = 0;
-
-  cout << "Starting process";
-  if (steps) cout << " (" + toString(steps) + " steps)";
-  cout << ": " << message << "." << endl;
-  fflush(stdout);
 
   int nums = toString(steps).length();
   reservedChs = 14 + 2*nums;
 
   fmt = steps ?
     "%" + toString(nums) + "u of " + toString(steps) + " [%s] %4s" :
-    string( "progress: %u" );
-  
+    string( "progress: %u" );  
   
   progPrevTV = sec(nowTime());
+  
+  if ( showme ) {;
+    cout << "Starting process";
+    if (steps) cout << " (" + toString(steps) + " steps)";
+    cout << ": " << message << "." << endl;
+    fflush(stdout);
+  }
+
 
 }
 
-/// \brief Updates the progress bar.
-///
-/// @param curstep Current step. Advances +1 if zero.
-///
-void
-ProgressBar::update(long curstep){
 
-  if ( !showme || !reservedChs ) return; // Uninitialized progress bar.
-  
-  step = curstep ? curstep+1 : step + 1;
-  
-  const double progNowTV = sec(nowTime());
-  if ( progNowTV - progPrevTV > 0.1 )
-    progPrevTV = progNowTV;
-  else
-    return;
+string ProgressBar::print_line() {
   
   int progln = getwidth() - reservedChs;
-  if ( progln <= 3 )  return; // if we have a very narrow terminal
+  if ( progln <= 3 )  return ""; // if we have a very narrow terminal
 
-  if ( steps && step >= steps ) {
+    if ( steps && step >= steps ) {
     done();
-    return;
+    return "";
   }
   
   string outS;
@@ -465,7 +441,31 @@ ProgressBar::update(long curstep){
     outS = toString(fmt, step);
   }
   
-  cout << string(waswidth+1, '\b') << outS;
+  return outS;
+
+}
+
+
+
+/// \brief Updates the progress bar.
+///
+/// @param curstep Current step. Advances +1 if zero.
+///
+void
+ProgressBar::update(long curstep){
+  
+  step = curstep ? curstep+1 : step + 1;
+
+  if ( !showme || !reservedChs ) return; // Uninitialized progress bar.
+  
+  const double progNowTV = sec(nowTime());
+  if ( progNowTV - progPrevTV > 0.1 )
+    progPrevTV = progNowTV;
+  else
+    return;
+  
+  string outS = print_line();
+  cout << string(waswidth+1, '\b') << outS ;
   fflush(stdout);
   waswidth = outS.length();
 
@@ -659,8 +659,7 @@ ReadImageLine_TIFF (const Path & filename, Map8U & storage,
 
   if( ! tif ) {
     if (fd) close(fd);
-    throw FloodErr(FloodErr::WARN, modname,
-                  "Could not read tif from file\"" + filename + "\".");
+    throw FloodErr(modname, "Could not read tif from file\"" + filename + "\".", FloodErr::WARN);
   }
 
   uint32 width = 0, height = 0;

@@ -79,7 +79,8 @@ public:
   typedef enum {
     WARN,                        ///< Warning
     ERR,                         ///< Error
-    FATAL                        ///< Fatal error
+    FATAL,                        ///< Fatal error
+    NONE=0
   } ErrTp ;
 
 private:
@@ -88,7 +89,8 @@ private:
   ErrTp terr;                   ///< Error severity
 
 public:
-  FloodErr(ErrTp _terr, const std::string & mod, const std::string & msg);
+  inline FloodErr(const std::string & mod = "", const std::string & msg = "", ErrTp _terr=NONE ) :
+      terr(_terr), module(mod), message(msg) {}
   ErrTp type() const;     ///< Returns error type.
   void report() const;        ///< Reports the error to the ctderr.
 };
@@ -112,7 +114,7 @@ throw_error(const std::string & mod, const std::string & msg);
 void
 throw_bug(const std::string & mod);
 
-
+ 
 /// \brief Constructs the warning and reports it.
 ///
 /// @param mod Module where the error happened
@@ -391,6 +393,7 @@ public:
   void update(long int curstep=0);  ///< Updates the progress bar
   inline int progress() const {return step;}
   void done();          ///< Finalizes the progress bar.
+  std::string print_line();
 
 };
 

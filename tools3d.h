@@ -30,7 +30,6 @@ struct GlobalVariables {
   int maxggrad; // square of the grad!
   
   blitz::Array < std::vector<Point3D>, 6 > newPoints;
-    
   blitz::Array < std::vector<Point3D>, 6 > markPoints;
   
   Point3D cross_point;
@@ -140,8 +139,8 @@ struct clargs {
   /// \CLARGSF
   clargs(int argc, char *argv[]);
   
-  static bool check_proc( poptmx::OptionTable & tab );
-  static bool check_save( poptmx::OptionTable & tab );
+  static void check_proc( poptmx::OptionTable & tab );
+  static void check_save( poptmx::OptionTable & tab );
   
 };
 

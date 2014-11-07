@@ -359,17 +359,12 @@ void apply_mask(bool invert) {
 
 void prepare_shift_volumes() {
   
-    // prepare the shift-volumes  
-  
   const int maxrad = max(g.radius, g.radiusM);
   const int radius2 = g.radius * g.radius;
   const int radiusM2 = g.radiusM * g.radiusM;
   
   g.newPoints = vector<Point3D>();
-  if ( g.radius == g.radiusM )
-    g.markPoints.reference( g.newPoints );
-  else 
-    g.markPoints = vector<Point3D>();
+  g.markPoints = vector<Point3D>();
   
   for ( int x = -maxrad ; x <= maxrad ; x++ )
     for ( int y = -maxrad ; y <= maxrad ; y++ )
@@ -393,7 +388,7 @@ void prepare_shift_volumes() {
                                 if ( ! _00M  || ( pnt - Point3D( 0, 0,-1) ).r2() > radius2 )
                                   g.newPoints( _P00, _M00, _0P0, _0M0, _00P, _00M ).push_back(pnt);
                     
-        if ( g.radius != g.radiusM  &&  pnt.r2() <= radiusM2 )
+        if ( pnt.r2() <= radiusM2 )
 
           for ( long _P00 = 0 ; _P00 <= 1 ; _P00++)
             if ( ! _P00  || ( pnt - Point3D( 1, 0, 0) ).r2() > radiusM2 )
@@ -514,6 +509,7 @@ void process() {
 
 int main(int argc, char *argv[]) {
 
+
   clargs args(argc, argv);
   
   struct sigaction act1;
@@ -532,9 +528,9 @@ int main(int argc, char *argv[]) {
   const Shape2D imgsh = ImageSizes(g.inlist[0]);
   const int nx=imgsh(0), ny=imgsh(1), nz=g.inlist.size();
   const Shape3D vshape(nx, ny, nz);
-  
+
   prepare_shift_volumes();
-      
+
   const int imapfile = allocateBigVolume( vshape, g.ivol);
   const int wmapfile = allocateBigVolume( vshape, g.wvol);
   
@@ -543,6 +539,7 @@ int main(int argc, char *argv[]) {
   
   operate_wvol( in_zeroing_thread ); 
 
+  
   
   if ( g.interactive ) {
     
@@ -573,10 +570,9 @@ int main(int argc, char *argv[]) {
             throw_error("save", "A process is already running. Stop it first.");
         
           poptmx::OptionTable table = args.save_table; 
-          if ( table.parse(aargc, aargv)  &&  clargs::check_save(table) )
-            save_results();
-          else
-            table.usage();        
+          table.parse(aargc, aargv);
+          clargs::check_save(table);
+          save_results();
         
         } else if ( string(aargv[0]) == "apply" ) {
           

@@ -86,13 +86,13 @@ clargs::clargs(int argc, char *argv[]) :
   if (g.interactive)
     return;
     
-  if ( ! check_proc(table)  ||  ! check_save(table) )
-    exit_on_error(g.command, "Parsing CLI.");
+  check_proc(table);
+  check_save(table);
       
 }
 
 
-bool clargs::check_proc( poptmx::OptionTable & tab ) {
+void clargs::check_proc( poptmx::OptionTable & tab ) {
  
   if ( g.radius < 0 )
     throw_error(g.command, "Impossible parameter value : " + tab.desc(&g.radius) + "."
@@ -121,20 +121,20 @@ bool clargs::check_proc( poptmx::OptionTable & tab ) {
     throw_error(g.command, "Missing required argument: "+tab.desc(&g.start)+".");
   
 //  if ( nextdim < 1 || nextdim > 3 )
-//    throw_error(command, "Impossible parameter value : " + tab.desc(&nextdim) + "."); 
+//    throw_error(g.command, "Impossible parameter value : " + tab.desc(&nextdim) + "."); 
 
   
 }
 
-bool clargs::check_save( poptmx::OptionTable & tab ) {
+void clargs::check_save( poptmx::OptionTable & tab ) {
   
     if ( ! ( tab.count(& g.out_filled) +
            tab.count(& g.out_inverted) +
            tab.count(& g.out_mask) ) )
-    warn(g.command, "At least one of the two following arguments is required: "
-                            +tab.desc(&g.out_mask)+ ", "
-                            +tab.desc(&g.out_filled)+ ", "
-                            +tab.desc(&g.out_inverted)+ ".");
+      throw_error(g.command, "At least one of the two following arguments is required: "
+                             +tab.desc(&g.out_mask)+ ", "
+                             +tab.desc(&g.out_filled)+ ", "
+                             +tab.desc(&g.out_inverted)+ ".");
 
 }
 

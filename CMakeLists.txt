@@ -30,7 +30,7 @@ FIND_PACKAGE(TIFF REQUIRED)
 
 FIND_PACKAGE(Readline REQUIRED)
 
-find_library(HAVE_POPTMX pthread)
+find_library(HAVE_PTHREAD pthread)
 if( "${HAVE_PTHREAD}" MATCHES "HAVE_PTHREAD-NOTFOUND" )
   message(FATAL_ERROR "Pthread library not found.")
 endif()

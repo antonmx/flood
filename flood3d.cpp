@@ -630,27 +630,41 @@ int main(int argc, char *argv[]) {
         } else if ( string(aargv[0]) == "slice" ) {        
         
           Point3D cross;
+          bool sgrad=false;
           bool original=false;
           poptmx::OptionTable table; 
           table
             .add(poptmx::ARGUMENT, &cross, "point", "slices through this point", "")
             .add(poptmx::OPTION, &original, 'o', "original",
-                "Save slices through the data volume, not mask.", "");
+                "Save slices through the data volume, not mask.", "")
+            .add(poptmx::ARGUMENT, &sgrad, "gradient", "Saves gradient of the original volume", "");
+                    
+          table.parse(aargc, aargv);
           
           if ( ! cross.inVolume(vshape) )
             cross = g.cross_point;
+
+          Map8U yz( g.ivol.shape()(2), g.ivol.shape()(1) );
+          Map8U xz( g.ivol.shape()(2), g.ivol.shape()(0) );
+          Map8U xy( g.ivol.shape()(1), g.ivol.shape()(0) );
           
-          table.parse(aargc, aargv);
-        
-          const Volume8U & voltosave = original ? g.ivol : g.wvol;
-          Map8U yz( voltosave.shape()(2), voltosave.shape()(1) );
-          yz = voltosave( cross.x(), Range::all(), Range::all() ).transpose(secondDim, firstDim) ;
-          SaveImage(".yz.tif", yz);
-          Map8U xz( voltosave.shape()(2), voltosave.shape()(0) );
-          xz = voltosave( Range::all(), cross.y(), Range::all() ).transpose(secondDim, firstDim) ;
-          SaveImage(".xz.tif", xz);
-          Map8U xy = voltosave( Range::all(), Range::all(), cross.z() ).copy();
-          SaveImage(".xy.tif", xy);
+          if (sgrad) {
+
+            
+            
+            
+          } else {
+            
+            const Volume8U & voltosave = original ? g.ivol : g.wvol;
+
+            yz = voltosave( cross.x(), Range::all(), Range::all() ).transpose(secondDim, firstDim) ;
+            SaveImage(".yz.tif", yz);            
+            xz = voltosave( Range::all(), cross.y(), Range::all() ).transpose(secondDim, firstDim) ;
+            SaveImage(".xz.tif", xz);
+            xy = voltosave( Range::all(), Range::all(), cross.z() ).copy();
+            SaveImage(".xy.tif", xy);
+            
+          }
           
 
         } else {

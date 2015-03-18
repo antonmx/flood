@@ -225,7 +225,7 @@ void * in_apply_thread (void * _thread_args) {
           * wdat = g.wvol.data() + start;
   const uint8_t * iend = g.ivol.data() + min( g.ivol.size(), start + chunk );           
   while ( idat != iend ) {
-    if ( ( ! args->invert  &&  ( ! *wdat & FILLED ) )  ||
+    if ( ( ! args->invert  &&  ( ! ( *wdat & FILLED ) ) )  ||
          (   args->invert  &&  (   *wdat & FILLED ) )  )              
       *idat = g.color;
     wdat++;

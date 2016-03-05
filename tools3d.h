@@ -77,12 +77,12 @@ public:
   ReadWriteDistributor() {}
     
   void PrepareForRead(){
-    bar = ProgressBar( g.beverbose , "reading volume", g.ivol.depth() );
+    bar = ProgressBar( g.beverbose , "reading volume", g.ivol.extent(blitz::firstDim) );
     currentidx=0;
   }
   
   void PrepareForWrite(){
-    bar = ProgressBar( g.beverbose, "writing results", g.ivol.depth() );
+    bar = ProgressBar( g.beverbose, "writing results", g.ivol.extent(blitz::firstDim) );
     currentidx=0;
   }
 
@@ -91,7 +91,7 @@ public:
     pthread_mutex_lock( & iolock );
     *idx = currentidx++;
     pthread_mutex_unlock( & iolock );
-    return *idx < g.ivol.depth() ;
+    return *idx < g.ivol.extent(blitz::firstDim) ;
   }
   
   void updateProg() {

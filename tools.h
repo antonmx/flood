@@ -457,18 +457,18 @@ private:
   
 public:
   
-  inline Point3D(long int x=0, long int y=0, long int z=0) : point(x,y,z) {};
+  inline Point3D(long int z=0, long int y=0, long int x=0) : point(z,y,x) {};
   
-  inline int x() const { return point(0); }
+  inline int x() const { return point(2); }
   
   inline int y() const { return point(1); }
   
-  inline int z() const { return point(2); }
+  inline int z() const { return point(0); }
   
   inline bool inVolume(const Shape3D & shape) const {
-     return x() >= 0 && x() < shape(0) &&
+     return x() >= 0 && x() < shape(2) &&
             y() >= 0 && y() < shape(1) &&
-            z() >= 0 && z() < shape(2);
+            z() >= 0 && z() < shape(0);
   }
   
   inline int r2() const { return x()*x() + y()*y() + z()*z() ; }
@@ -505,7 +505,7 @@ inline int _conversion (Point3D* _val, const std::string & in) {
     scanres = sscanf( in.c_str(), "%i,%i,%i", &x, &y, &z);
   if ( 3 != scanres || x<0 || y<0 || z<0 )
     return -1;
-  *_val = Point3D(y,x,z); // it's not a mistake!
+  *_val = Point3D(z,y,x); // it's not a mistake!
   return 1;
 }
 

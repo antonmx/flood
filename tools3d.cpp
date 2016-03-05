@@ -246,13 +246,13 @@ void * in_read_thread (void * _thread_args) {
   if (!dist)
     throw_error("read thread", "Inappropriate thread function arguments.");
   
-  Shape2D imgsh = Shape2D(g.ivol.extent(firstDim) , g.ivol.extent(secondDim) ) ;
+  Shape2D imgsh = Shape2D(g.ivol.extent(secondDim) , g.ivol.extent(thirdDim) ) ;
   Map8U img(imgsh);
   
   long int idx;
   while ( dist->distribute(&idx) ) {
     ReadImage(g.inlist[idx], img, imgsh);
-    g.ivol( Range::all(), Range::all(), idx ) = img;
+    g.ivol( idx, Range::all(), Range::all() ) = img;
     dist->updateProg();
   }
     
@@ -268,7 +268,7 @@ void * in_write_thread (void * _thread_args) {
   if (!dist)
     throw_error("write thread", "Inappropriate thread function arguments.");
   
-  const Shape2D imgsh(g.ivol.extent(firstDim) , g.ivol.extent(secondDim));
+  const Shape2D imgsh(g.ivol.extent(secondDim) , g.ivol.extent(thirdDim));
   Map8U img(imgsh), wmg(imgsh);
   Path outPath;
   
@@ -280,7 +280,7 @@ void * in_write_thread (void * _thread_args) {
     if ( ! g.out_filled.empty() ) {
       for ( long int sh0 = 0 ; sh0 < imgsh(0) ; sh0++)
         for ( long int sh1 = 0 ; sh1 < imgsh(1) ; sh1++)
-          img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? g.ivol( sh0, sh1, idx ) : g.color ;
+          img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? g.ivol( idx, sh0, sh1 ) : g.color ;
       outPath = g.out_filled + g.inlist[idx].name();
       SaveImage(outPath, img);
     }
@@ -288,7 +288,7 @@ void * in_write_thread (void * _thread_args) {
     if ( ! g.out_inverted.empty() ) {
       for ( long int sh0 = 0 ; sh0 < imgsh(0) ; sh0++)
         for ( long int sh1 = 0 ; sh1 < imgsh(1) ; sh1++)
-          img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? g.color : g.ivol( sh0, sh1, idx ) ;
+          img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? g.color : g.ivol( idx, sh0, sh1 ) ;
       outPath = g.out_inverted + g.inlist[idx].name();
       SaveImage(outPath, img);
     }

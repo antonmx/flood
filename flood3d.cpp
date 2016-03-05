@@ -97,8 +97,8 @@ bool subcheck( const Point3D & pnt) {
 
 
 
-inline long int spn(const Point3D & pnt, int xx, int yy, int zz) {
-  Point3D pntinhere( pnt+Point3D( xx,yy,zz) );
+inline long int spn(const Point3D & pnt, int zz, int yy, int xx) {
+  Point3D pntinhere( pnt+Point3D( zz,yy,xx) );
   return
     pntinhere.inVolume(g.wvol.shape())  &&  g.wvol(pntinhere) & CHECKED
       ? 1l : 0l ;
@@ -370,7 +370,7 @@ void prepare_shift_volumes() {
     for ( int y = -maxrad ; y <= maxrad ; y++ )
       for ( int z = -maxrad ; z <= maxrad ; z++ ) {
         
-        const Point3D pnt(x,y,z);
+        const Point3D pnt(z,y,x);
         
         if ( pnt.r2() <= radius2 )
 
@@ -463,13 +463,12 @@ void start_process() {
     for ( int x = - g.stop[cpnt].radius ; x <= g.stop[cpnt].radius ; x++ )
       for ( int y = - g.stop[cpnt].radius ; y <= g.stop[cpnt].radius ; y++ )
         for ( int z = -g.stop[cpnt].radius ; z <= g.stop[cpnt].radius ; z++ ) { 
-          const Point3D pnt = Point3D(x,y,z) + g.stop[cpnt].center;
-          if ( Point3D(x,y,z).r2() <= rs2  &&  pnt.inVolume(g.ivol.shape()) )
+          const Point3D pnt = Point3D(z,y,x) + g.stop[cpnt].center;
+          if ( Point3D(z,y,x).r2() <= rs2  &&  pnt.inVolume(g.ivol.shape()) )
             g.wvol(pnt) |= ISBAD | SCHEDULED;
         }
   }   
   
-  prdn(0);
   // process
   procdist = ProcDistributor();
   for (int ith = 0 ; ith < g.run_threads ; ith++)
@@ -490,7 +489,6 @@ void finish_process() {
   for (int ith = 0 ; ith < proc_threads.size() ; ith++)
     pthread_join( proc_threads[ith], 0);
   procdist.finilizeProgressBar();
-  prdn(1);
   proc_threads.clear();
 }
 
@@ -509,7 +507,6 @@ void process() {
 
 int main(int argc, char *argv[]) {
 
-
   clargs args(argc, argv);
   
   struct sigaction act1;
@@ -526,8 +523,8 @@ int main(int argc, char *argv[]) {
            " mask slices through the first start point.\n", getpid() );
 
   const Shape2D imgsh = ImageSizes(g.inlist[0]);
-  const int nx=imgsh(0), ny=imgsh(1), nz=g.inlist.size();
-  const Shape3D vshape(nx, ny, nz);
+  const int nx=imgsh(1), ny=imgsh(0), nz=g.inlist.size();
+  const Shape3D vshape(nz, ny, nx);
 
   prepare_shift_volumes();
 
@@ -614,11 +611,16 @@ int main(int argc, char *argv[]) {
           poptmx::OptionTable table = args.proc_table; 
           table.parse(aargc, aargv);   
           clargs::check_proc(table);
+	  
+	  prdn("starting 1");
           
           operate_wvol( in_wiping_thread ); 
           prepare_shift_volumes();
           
           g.beverbose = false;
+	  
+	  prdn("starting 2");
+	  
           start_process();  
         
         } else if ( string(aargv[0]) == "stop" ) { 
@@ -644,9 +646,9 @@ int main(int argc, char *argv[]) {
           if ( ! cross.inVolume(vshape) )
             cross = g.cross_point;
 
-          Map8U yz( g.ivol.shape()(2), g.ivol.shape()(1) );
-          Map8U xz( g.ivol.shape()(2), g.ivol.shape()(0) );
-          Map8U xy( g.ivol.shape()(1), g.ivol.shape()(0) );
+          Map8U yz( g.ivol.shape()(0), g.ivol.shape()(1) );
+          Map8U xz( g.ivol.shape()(0), g.ivol.shape()(2) );
+          Map8U xy( g.ivol.shape()(1), g.ivol.shape()(2) );
           
           if (sgrad) {
 
@@ -656,12 +658,15 @@ int main(int argc, char *argv[]) {
           } else {
             
             const Volume8U & voltosave = original ? g.ivol : g.wvol;
-
-            yz = voltosave( cross.x(), Range::all(), Range::all() ).transpose(secondDim, firstDim) ;
+	    
+	    prdn("starting 3");
+	    cout << voltosave.shape() << " " << yz.shape() << " " << xz.shape() << " " << xy.shape() << " " << cross.x() << " " << cross.y() << " " << cross.z() << endl;
+            yz = voltosave( Range::all(), Range::all(), cross.x() ).copy() ;
+	    prdn("starting 4");
             SaveImage(".yz.tif", yz);            
-            xz = voltosave( Range::all(), cross.y(), Range::all() ).transpose(secondDim, firstDim) ;
+            xz = voltosave( Range::all(), cross.y(), Range::all() ).copy() ;
             SaveImage(".xz.tif", xz);
-            xy = voltosave( Range::all(), Range::all(), cross.z() ).copy();
+            xy = voltosave( cross.z(), Range::all(), Range::all() ).copy();
             SaveImage(".xy.tif", xy);
             
           }

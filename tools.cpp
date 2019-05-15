@@ -64,7 +64,7 @@ const timespec startTV = nowTime();
 timespec prevTV = startTV;
 
 inline double sec( const timespec & tm ) {
-  return tm.tv_sec + tm.tv_nsec / 1000000000.0; 
+  return tm.tv_sec + tm.tv_nsec / 1000000000.0;
 }
 
 void prdn( int a ) {
@@ -406,10 +406,10 @@ ProgressBar::ProgressBar(bool _showme, const string & _message, long int _steps)
 
   fmt = steps ?
     "%" + toString(nums) + "u of " + toString(steps) + " [%s] %4s" :
-    string( "progress: %u" );  
-  
+    string( "progress: %u" );
+
   progPrevTV = sec(nowTime());
-  
+
   if ( showme ) {;
     cout << "Starting process";
     if (steps) cout << " (" + toString(steps) + " steps)";
@@ -422,7 +422,7 @@ ProgressBar::ProgressBar(bool _showme, const string & _message, long int _steps)
 
 
 string ProgressBar::print_line() {
-  
+
   int progln = getwidth() - reservedChs;
   if ( progln <= 3 )  return ""; // if we have a very narrow terminal
 
@@ -430,7 +430,7 @@ string ProgressBar::print_line() {
     done();
     return "";
   }
-  
+
   string outS;
   if (steps) {
     string eqs = string(progln*step/steps, '=') + string(progln, ' ') ;
@@ -440,7 +440,7 @@ string ProgressBar::print_line() {
   } else {
     outS = toString(fmt, step);
   }
-  
+
   return outS;
 
 }
@@ -453,17 +453,17 @@ string ProgressBar::print_line() {
 ///
 void
 ProgressBar::update(long curstep){
-  
+
   step = curstep ? curstep+1 : step + 1;
 
   if ( !showme || !reservedChs ) return; // Uninitialized progress bar.
-  
+
   const double progNowTV = sec(nowTime());
   if ( progNowTV - progPrevTV > 0.1 )
     progPrevTV = progNowTV;
   else
     return;
-  
+
   string outS = print_line();
   cout << string(waswidth+1, '\b') << outS ;
   fflush(stdout);
@@ -530,11 +530,11 @@ ProgressBar::getwidth(){
 
 int
 allocateBigVolume( const Shape3D & shape, Volume8U & data ) {
-  
+
   const std::string modname="Big volume allocation";
-  
+
   int mapfile = 0;
-  
+
   try { data.resize(shape); }
   catch(std::bad_alloc err) {
 
@@ -587,11 +587,11 @@ allocateBigVolume( const Shape3D & shape, Volume8U & data ) {
     }
 
     data.reference( Volume8U(datap, shape, blitz::neverDeleteData) );
-    
+
   }
-  
+
   return mapfile;
-  
+
 }
 
 
@@ -601,17 +601,16 @@ allocateBigVolume( const Shape3D & shape, Volume8U & data ) {
 Shape2D
 ImageSizes(const Path & filename){
   Magick::Image imag;
-  try { imag.ping(filename); }
+  try {
+    imag.ping(filename);
+  }
   catch ( Magick::WarningCoder err ) {}
   catch ( Magick::Exception & error) {
     throw_error("get image size", "Could not read image file\""+filename+"\"."
-            " Caught Magick++ exception: \""+error.what()+"\".");
+                        " Caught Magick++ exception: \""+error.what()+"\".");
   }
   return Shape2D( imag.rows(), imag.columns() );
 }
-
-
-
 
 
 
@@ -775,16 +774,14 @@ ReadImage_IM (const Path & filename, Map8U & storage ) {
   const int
     width = imag.columns(),
     hight = imag.rows();
-  const Magick::PixelPacket * pixels = imag.getConstPixels(0,0,width,hight);
-
   storage.resize( hight, width );
-  unsigned char * data = storage.data();
 
-  for ( int k = 0 ; k < hight*width ; k++ )
-    *data++ = (pixels++)->red;
+  for (blitz::MyIndexType curw = 0 ; curw < width ; curw++)
+    for (blitz::MyIndexType curh = 0 ; curh < hight ; curh++)
+      storage(curh,curw) = Magick::ColorGray(imag.pixelColor(curw, curh)).shade();
 
 }
- 
+
 void
 ReadImage (const Path & filename, Map8U & storage ){
   try { ReadImage_TIFF(filename, storage); }
@@ -809,10 +806,10 @@ ReadImage(const Path & filename, Map8U & storage, const Shape2D & shp) {
 ///
 /// @param filename file to save image into.
 /// @param storage array with the image.
-///  
+///
 void
 SaveImage (const Path & filename, const Map8U & storage) {
-  
+
   if ( ! storage.size() ) {
     warn("save image", "Zero-sized array for image \"" + filename + "\" - will not be saved.");
     return;
@@ -821,14 +818,14 @@ SaveImage (const Path & filename, const Map8U & storage) {
   const int
     width = storage.columns(),
     hight = storage.rows();
-    
+
   const string extension = lower( filename.extension() );
   if ( extension.empty() || extension == ".tif" || extension == ".tiff" ) {
-    
+
     TIFF *image = TIFFOpen(filename.c_str(), "w");
     if( ! image )
       throw_error("save tiff image", "Could create file\"" + filename + "\".");
-    
+
     // We need to set some values for basic tags before we can add any data
     TIFFSetField(image, TIFFTAG_IMAGEWIDTH, width);
     TIFFSetField(image, TIFFTAG_IMAGELENGTH, hight);
@@ -842,27 +839,25 @@ SaveImage (const Path & filename, const Map8U & storage) {
     TIFFClose(image);
     if ( -1 == wret )
       throw_error("save tiff image", "Could not save image to file \"" + filename + "\".");
-    
-  } else { 
-    
+
+  } else {
+
     Magick::Image imag( Magick::Geometry(width, hight), "black" );
     imag.classType(Magick::DirectClass);
     imag.type( Magick::GrayscaleType );
     imag.depth(8);
     imag.magick("TIFF"); // saves to tif if not overwritten by the extension.
 
-    const unsigned char *data = storage.data();
-    Magick::PixelPacket * pixels = imag.getPixels(0,0,width,hight);
-    for ( int k = 0 ; k < hight*width ; k++ )
-      *pixels++ = Magick::PixelPacket( Magick::ColorGray( *data++ / 256 ) );
+  for (blitz::MyIndexType curw = 0 ; curw < width ; curw++)
+    for (blitz::MyIndexType curh = 0 ; curh < hight ; curh++)
+      imag.pixelColor(curw, curh, Magick::ColorGray(storage(curh,curw)));
 
-    imag.syncPixels();
     try { imag.write(filename); }
     catch ( Magick::Exception & error) {
       throw_error("save image IM", "Could not write image file\""+filename+"\"."
         " Caught Magick++ exception: \""+error.what()+"\".");
     }
-      
+
   }
 
 }

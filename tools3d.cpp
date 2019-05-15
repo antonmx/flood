@@ -17,7 +17,7 @@ clargs::clargs(int argc, char *argv[]) :
   table("3D advanced flood fill.",
         "Advanced flood fill algorithm implemented for the 3D volume.")
 {
-  
+
   proc_table
     .add(poptmx::NOTE, "Processing options:")
     .add(poptmx::OPTION, &g.start, 's', "start",
@@ -25,9 +25,9 @@ clargs::clargs(int argc, char *argv[]) :
     .add(poptmx::OPTION, &g.stop, 'S', "stop",
          "Stop sphere(s).", "Three coordinates and radius.")
     .add(poptmx::OPTION, &g.radius, 'r', "test-radius",
-         "Radius of the test sphere.", "")    
+         "Radius of the test sphere.", "")
     .add(poptmx::OPTION, &g.radiusM, 'R', "mark-radius",
-         "Radius of the fill sphere.", "")    
+         "Radius of the fill sphere.", "")
     .add(poptmx::OPTION, &g.minval, 'm', "minval",
          "Minimum value.", "")
     .add(poptmx::OPTION, &g.maxval, 'M', "maxval",
@@ -39,14 +39,14 @@ clargs::clargs(int argc, char *argv[]) :
 //    .add(poptmx::OPTION, &nextdim, 'n', "next",
 //         "Dimension for finding neigbours.",
 //         "Can be 1 - lines (6 neigbours), 2 - planes (14) and 3 - cube (26)")
-         
-         
+
+
   color_table
     .add(poptmx::OPTION, &g.color, 'c', "color",
          "Color of the fill volume.",
          "Instead of masking the volume, paints it with this color.")  ;
-    
-  save_table      
+
+  save_table
     .add(poptmx::NOTE, "Saving options:")
     .add(color_table)
     .add(poptmx::OPTION, &g.out_filled, 'f', "outfilled",
@@ -54,8 +54,8 @@ clargs::clargs(int argc, char *argv[]) :
     .add(poptmx::OPTION, &g.out_inverted, 'e', "outinvert",
          "Prefix to output not filled.", "", g.out_inverted)
     .add(poptmx::OPTION, &g.out_mask, 'b', "outmask",
-         "Prefix to output mask.", "Outputs bit mask.", g.out_mask);   
-    
+         "Prefix to output mask.", "Outputs bit mask.", g.out_mask);
+
 
   table
     .add(poptmx::NOTE, "ARGUMENTS:")
@@ -67,44 +67,44 @@ clargs::clargs(int argc, char *argv[]) :
     .add(proc_table)
     .add(save_table)
     .add_standard_options(&g.beverbose);
-    
-    
+
+
   if ( ! table.parse(argc,argv) )
     exit(0);
   if ( ! table.count() ) {
     table.usage();
     exit(0);
   }
-  
+
   g.command = table.name();
-      
+
   // <list> : required argument.
   if ( ! table.count(&g.inlist) )
     exit_on_error(g.command, "Missing required argument: "+table.desc(&g.inlist)+".");
-  
-  
+
+
   if (g.interactive)
     return;
-    
+
   check_proc(table);
   check_save(table);
-      
+
 }
 
 
 void clargs::check_proc( poptmx::OptionTable & tab ) {
- 
+
   if ( g.radius < 0 )
     throw_error(g.command, "Impossible parameter value : " + tab.desc(&g.radius) + "."
-                             " Cannot be negative.");  
+                             " Cannot be negative.");
   if ( ! tab.count(&g.radiusM) )
     g.radiusM = g.radius;
   if ( tab.count(&g.minval) && ( g.minval < 0 || g.minval > 256 ) )
     throw_error(g.command, "Impossible parameter value : " + tab.desc(&g.minval) + "."
-                           " Must be in the range [0,256].");  
+                           " Must be in the range [0,256].");
   if ( tab.count(&g.maxval) && ( g.maxval < 0 || g.maxval > 256 ) )
     throw_error(g.command, "Impossible parameter value : " + tab.desc(&g.maxval) + "."
-                           " Must be in the range [0,256].");  
+                           " Must be in the range [0,256].");
   if ( tab.count(&g.minggrad) && ( g.minggrad < 0 || g.minggrad > 256 ) )
     throw_error(g.command, "Impossible parameter value : " + tab.desc(&g.minggrad) + "."
                            " Must be in the range [0,256].");
@@ -112,22 +112,22 @@ void clargs::check_proc( poptmx::OptionTable & tab ) {
     g.minggrad *= g.minggrad;
   if ( tab.count(&g.maxggrad) && ( g.maxggrad < 0 || g.maxggrad > 256 ) )
     throw_error(g.command, "Impossible parameter value : " + tab.desc(&g.maxggrad) + "."
-                           " Must be in the range [0,256].");  
+                           " Must be in the range [0,256].");
   if ( tab.count(&g.maxggrad) )
     g.maxggrad *= g.maxggrad;
-  
+
     // point : required argument.
   if ( ! tab.count(&g.start) )
     throw_error(g.command, "Missing required argument: "+tab.desc(&g.start)+".");
-  
-//  if ( nextdim < 1 || nextdim > 3 )
-//    throw_error(g.command, "Impossible parameter value : " + tab.desc(&nextdim) + "."); 
 
-  
+//  if ( nextdim < 1 || nextdim > 3 )
+//    throw_error(g.command, "Impossible parameter value : " + tab.desc(&nextdim) + ".");
+
+
 }
 
 void clargs::check_save( poptmx::OptionTable & tab ) {
-  
+
     if ( ! ( tab.count(& g.out_filled) +
            tab.count(& g.out_inverted) +
            tab.count(& g.out_mask) ) )
@@ -146,21 +146,21 @@ void sig1handler(int signum) {
 }
 
 void sig2handler(int signum) {
-  
-  Point3D pnt;  
+
+  Point3D pnt;
   char line[256];
-  
+
   FILE *funcf = fopen( ".sliceme.txt", "r" );
-  
-  if ( ! funcf || 
+
+  if ( ! funcf ||
        1 != fscanf ( funcf,  "%254[^\n]\n", line) ||
        1 != _conversion (&pnt, line) ||
-       ! pnt.inVolume(g.wvol.shape()) ) 
+       ! pnt.inVolume(g.wvol.shape()) )
     pnt = g.cross_point;
-  
+
   if (funcf)
     fclose(funcf);
-  
+
   Map8U yz( g.wvol.shape()(2), g.wvol.shape()(1) );
   yz = g.wvol( pnt.x(), Range::all(), Range::all() ).transpose(secondDim, firstDim) ;
   SaveImage(".yz.tif", yz);
@@ -169,27 +169,27 @@ void sig2handler(int signum) {
   SaveImage(".xz.tif", xz);
   Map8U xy = g.wvol( Range::all(), Range::all(), pnt.z() ).copy();
   SaveImage(".xy.tif", xy);
-  
+
   printf("Written slices through (%i, %i, %i) point."
          " Files are named \".xy.tif\", \".xz.tif\" and \".yz.tif\".\n",
          pnt.x(), pnt.y(), pnt.z() );
-  
+
 }
 
 
 void * in_zeroing_thread (void * _thread_args) {
-  
+
   int threadnum = (long int) _thread_args; // dirty hack
-  
+
   const long int chunk = 1 + ( g.ivol.size() / g.run_threads );
   const long int start = threadnum * chunk;
-  
+
   uint8_t * wdat = g.wvol.data() + start;
-  const uint8_t * wend = g.wvol.data() + min( g.wvol.size(), start + chunk );           
+  const uint8_t * wend = g.wvol.data() + min( g.wvol.size(), start + chunk );
   while ( wdat != wend )
     *wdat++ = 0;
 
-  
+
 }
 
 
@@ -197,41 +197,41 @@ void * in_zeroing_thread (void * _thread_args) {
 
 
 void * in_wiping_thread (void * _thread_args) {
-  
+
   int threadnum = (long int) _thread_args; // dirty hack
-  
+
   const long int chunk = 1 + ( g.ivol.size() / g.run_threads );
   const long int start = threadnum * chunk;
   const uint8_t mask = ( ~ISBAD ) & ( ~ISGOOD );
-  
+
   uint8_t * wdat = g.wvol.data() + start;
-  const uint8_t * wend = g.wvol.data() + min( g.wvol.size(), start + chunk );           
+  const uint8_t * wend = g.wvol.data() + min( g.wvol.size(), start + chunk );
   while ( wdat != wend )
     *wdat++ &= mask;
-  
+
 }
 
 
 void * in_apply_thread (void * _thread_args) {
-  
+
   ApplyArgs *  args = (ApplyArgs*) _thread_args;
   if (!args)
     throw_error("apply mask thread", "Inappropriate thread function arguments.");
-  
+
   const long int chunk = 1 + ( g.ivol.size() / g.run_threads );
   const long int start = args->threadnum * chunk;
-  
+
   uint8_t * idat = g.ivol.data() + start,
           * wdat = g.wvol.data() + start;
-  const uint8_t * iend = g.ivol.data() + min( g.ivol.size(), start + chunk );           
+  const uint8_t * iend = g.ivol.data() + min( g.ivol.size(), start + chunk );
   while ( idat != iend ) {
     if ( ( ! args->invert  &&  ( ! ( *wdat & FILLED ) ) )  ||
-         (   args->invert  &&  (   *wdat & FILLED ) )  )              
+         (   args->invert  &&  (   *wdat & FILLED ) )  )
       *idat = g.color;
     wdat++;
     idat++;
   }
-      
+
 }
 
 
@@ -241,21 +241,21 @@ pthread_mutex_t ReadWriteDistributor::proglock = PTHREAD_MUTEX_INITIALIZER;
 
 
 void * in_read_thread (void * _thread_args) {
-  
+
   ReadWriteDistributor *  dist = (ReadWriteDistributor*) _thread_args;
   if (!dist)
     throw_error("read thread", "Inappropriate thread function arguments.");
-  
+
   Shape2D imgsh = Shape2D(g.ivol.extent(secondDim) , g.ivol.extent(thirdDim) ) ;
   Map8U img(imgsh);
-  
+
   long int idx;
   while ( dist->distribute(&idx) ) {
     ReadImage(g.inlist[idx], img, imgsh);
     g.ivol( idx, Range::all(), Range::all() ) = img;
     dist->updateProg();
   }
-    
+
 }
 
 
@@ -263,20 +263,20 @@ void * in_read_thread (void * _thread_args) {
 
 
 void * in_write_thread (void * _thread_args) {
-  
+
   ReadWriteDistributor *  dist = (ReadWriteDistributor*) _thread_args;
   if (!dist)
     throw_error("write thread", "Inappropriate thread function arguments.");
-  
+
   const Shape2D imgsh(g.ivol.extent(secondDim) , g.ivol.extent(thirdDim));
   Map8U img(imgsh), wmg(imgsh);
   Path outPath;
-  
+
   long int idx;
   while ( dist->distribute(&idx) ) {
-    
-    wmg = g.wvol( Range::all(), Range::all(), idx );
-    
+
+    wmg = g.wvol(idx, Range::all(), Range::all());
+
     if ( ! g.out_filled.empty() ) {
       for ( long int sh0 = 0 ; sh0 < imgsh(0) ; sh0++)
         for ( long int sh1 = 0 ; sh1 < imgsh(1) ; sh1++)
@@ -284,7 +284,7 @@ void * in_write_thread (void * _thread_args) {
       outPath = g.out_filled + g.inlist[idx].name();
       SaveImage(outPath, img);
     }
-    
+
     if ( ! g.out_inverted.empty() ) {
       for ( long int sh0 = 0 ; sh0 < imgsh(0) ; sh0++)
         for ( long int sh1 = 0 ; sh1 < imgsh(1) ; sh1++)
@@ -292,17 +292,17 @@ void * in_write_thread (void * _thread_args) {
       outPath = g.out_inverted + g.inlist[idx].name();
       SaveImage(outPath, img);
     }
-    
+
     if ( ! g.out_mask.empty() ) {
       outPath = g.out_mask + g.inlist[idx].name();
       SaveImage(outPath, wmg);
     }
-        
+
     dist->updateProg();
-    
+
   }
-  
-  
+
+
 }
 
 

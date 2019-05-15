@@ -62,8 +62,7 @@ endif()
   
 add_executable(flood3d flood3d.cpp tools.cpp tools3d.cpp)
 target_link_libraries(flood3d
-  Magick++
-  MagickCore
+  ${ImageMagick_LIBRARIES}
   tiff
   poptmx
   pthread
@@ -75,8 +74,7 @@ install(TARGETS flood3d RUNTIME DESTINATION bin)
 
 add_executable(flood2d flood2d.cpp tools.cpp)
 target_link_libraries(flood2d
-  Magick++
-  MagickCore
+  ${ImageMagick_LIBRARIES}
   tiff
   poptmx
   pthread

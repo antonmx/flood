@@ -29,7 +29,6 @@
 
 #include "tools.h"
 #include "tools3d.h"
-#include <blitz/rand-tt800.h>
 
 #include <pthread.h>
 #include <queue>
@@ -106,9 +105,6 @@ inline long int spn(const Point3D & pnt, int zz, int yy, int xx) {
 
 // THIS IS THE KEY FUNCTION
 int checkMe(const Point3D & pnt) {
-
-  static const int radius2 = g.radius * g.radius;
-
   const vector<Point3D> & tocheck = g.newPoints( spn(pnt, 1, 0, 0), spn(pnt,-1, 0, 0),
                                                  spn(pnt, 0, 1, 0), spn(pnt, 0,-1, 0),
                                                  spn(pnt, 0, 0, 1), spn(pnt, 0, 0,-1) );
@@ -159,8 +155,8 @@ class ProcDistributor {
 
 private:
 
-  list<Point3D> schedule;
-  list<Point3D> inwork;
+  queue<Point3D> schedule;
+  int thinwork;
 
   static pthread_mutex_t picklock;
   static pthread_cond_t check_again;
@@ -170,27 +166,43 @@ public:
 
   ProgressBar bar;
 
-  ProcDistributor() {
-      bar=ProgressBar( g.beverbose , "processing volume", g.ivol.size() );
+  ProcDistributor()
+  : thinwork(0)
+  , bar( g.beverbose , "processing volume", g.ivol.size() )
+  {
       for ( int cpnt=0 ; cpnt < g.start.size() ; cpnt++ )
-        schedule.push_back( g.start[cpnt] );
+        schedule.push( g.start[cpnt] );
   }
+
+  /*
+  int register_thread() {
+    pthread_mutex_lock( & picklock );
+    if (thread_counter >= g.run_threads) // must never happen
+      throw_error("Proc thread registration", "thread counter more than max number of threads.");
+    inwork[thread_counter] = 1;
+    const int ret = thread_counter++;
+    pthread_mutex_unlock( & picklock );
+    return ret;
+  }
+  */
+
 
   bool distribute( Point3D * pnt ) {
 
-    pthread_mutex_lock( & picklock );
-
     bool ret = true;
 
-    while ( schedule.empty() && ! inwork.empty() )
+    pthread_mutex_lock( & picklock );
+
+    // while ( schedule.empty() && binary_search(inwork.begin(), inwork.end(), 1) )
+    while ( schedule.empty() && thinwork )
       pthread_cond_wait(&check_again, &picklock);
 
     if ( schedule.empty() ) {
       ret = false;
     } else {
       *pnt = schedule.front();
-      schedule.pop_front();
-      inwork.push_back(*pnt);
+      schedule.pop();
+      thinwork++;
     }
 
     pthread_mutex_unlock( & picklock );
@@ -200,7 +212,7 @@ public:
 
   }
 
-  void collect( const Point3D & pnt, int ffrad ) {
+  void collect( const Point3D & pnt, int ffrad) {
 
     list<Point3D> add_to_schedule;
 
@@ -223,44 +235,9 @@ public:
       scheduleMe( 0, 0, 1);
       scheduleMe( 0, 0,-1);
 
-/*
-      if (g.nextdim > 1) {
-
-        scheduleMe( 0, 1, 0);
-        scheduleMe( 0,-1, 0);
-        scheduleMe( 0, 1, 1);
-        scheduleMe( 0,-1,-1);
-
-        scheduleMe( 1, 0, 0);
-        scheduleMe(-1, 0, 0);
-        scheduleMe( 1, 0, 1);
-        scheduleMe(-1, 0,-1);
-
-        scheduleMe( 1, 0, 0);
-        scheduleMe(-1, 0, 0);
-        scheduleMe( 1, 1, 0);
-        scheduleMe(-1,-1, 0);
-
-      }
-
-      if (g.nextdim > 2) {
-
-        scheduleMe( 1, 1, 1);
-        scheduleMe(-1, 1, 1);
-        scheduleMe( 1,-1, 1);
-        scheduleMe(-1,-1, 1);
-        scheduleMe( 1, 1,-1);
-        scheduleMe(-1, 1,-1);
-        scheduleMe( 1,-1,-1);
-        scheduleMe(-1,-1,-1);
-
-      }
-*/
-
-
       const vector<Point3D> & tomark = g.markPoints( spn(pnt, 1, 0, 0), spn(pnt,-1, 0, 0),
-                                                   spn(pnt, 0, 1, 0), spn(pnt, 0,-1, 0),
-                                                   spn(pnt, 0, 0, 1), spn(pnt, 0, 0,-1) );
+                                                     spn(pnt, 0, 1, 0), spn(pnt, 0,-1, 0),
+                                                     spn(pnt, 0, 0, 1), spn(pnt, 0, 0,-1) );
       vector<Point3D>::const_iterator it = tomark.begin();
       while ( it != tomark.end() ) {
         Point3D tpnt( (*it++) + pnt );
@@ -275,19 +252,19 @@ public:
     }
 
 
+    list<Point3D>::const_iterator itl = add_to_schedule.begin();
     pthread_mutex_lock( & picklock );
-    schedule.splice(schedule.end(), add_to_schedule);
-    inwork.remove(pnt);
+    while ( itl != add_to_schedule.end() )
+      schedule.push(*itl++);
+    thinwork--;
     if ( ffrad )
       g.wvol(pnt) |= CHECKED;
     pthread_mutex_unlock( & picklock );
     pthread_cond_signal( & check_again ) ;
 
-
     pthread_mutex_lock( & proglock );
     bar.update();
     pthread_mutex_unlock( & proglock );
-
 
   }
 
@@ -309,18 +286,13 @@ pthread_mutex_t ProcDistributor::proglock = PTHREAD_MUTEX_INITIALIZER;
 
 
 void * in_proc_thread (void * _thread_args) {
-
   ProcDistributor *  dist = (ProcDistributor*) _thread_args;
   if (!dist)
     throw_error("process thread", "Inappropriate thread function arguments.");
-
   Point3D pnt;
   while ( dist->distribute(&pnt) && ! g.stopProcessing )
     dist->collect( pnt, checkMe(pnt) );
-
-  if (g.beverbose)
-    prdn("Processing thread finished.");
-
+  return 0;
 }
 
 
@@ -332,7 +304,7 @@ void operate_wvol( void *(*start_routine) (void *) ) {
   vector<pthread_t> threads(g.run_threads);
 
   for (int ith = 0 ; ith < g.run_threads ; ith++)
-    if ( pthread_create( & threads[ith], NULL, start_routine, (void*) ith ) ) // dirty hack with (void*)
+    if ( pthread_create( & threads[ith], NULL, start_routine, (void*)(ith) ) ) // dirty hack with (void*)
       throw_error("Zeroing volume", "Can't create thread.");
   for (int ith = 0 ; ith < threads.size() ; ith++)
     pthread_join( threads[ith], 0);
@@ -541,140 +513,160 @@ int main(int argc, char *argv[]) {
   if ( g.interactive ) {
 
     const bool beverbose = g.beverbose;
-    char* lns;
+    char* flns;
     char** aargv;
     int aargc;
+    std::string sflns;
 
-    while ( lns = readline("enter a command > ") ) {
+    while ( flns = readline("enter a command > ") ) {
 
-      if (lns && *lns)
-        add_history (lns);
+      if (flns && *flns) {
+        add_history (flns);
+        sflns = string(flns);
+      } else {
+        sflns = " ";
+      }
 
-      try {
+      std::string lns;
+      std::istringstream tokenStream(sflns);
 
-        if ( string_to_argv(lns, &aargc, &aargv )  || ! aargc ) {
+      while (std::getline(tokenStream, lns, ';')) {
 
-          if ( ! proc_threads.size() )
-            printf("  No process is running.\n");
-          else
-            update_process();
+        try {
 
-          printf ( "  Possible commands are: start, stop, apply, save, slice.\n" );
+          if ( string_to_argv(lns.c_str(), &aargc, &aargv )  || ! aargc ) {
 
-        } else if ( string(aargv[0]) == "save" ) {
+            if ( ! proc_threads.size() )
+              printf("  No process is running.\n");
+            else
+              update_process();
 
-          if ( proc_threads.size() )
-            throw_error("save", "A process is already running. Stop it first.");
+            printf ( "  Possible commands are: start, stop, apply, save, slice.\n" );
 
-          poptmx::OptionTable table = args.save_table;
-          table.parse(aargc, aargv);
-          clargs::check_save(table);
-          save_results();
+          } else if ( string(aargv[0]) == "save" ) {
 
-        } else if ( string(aargv[0]) == "apply" ) {
+            if ( proc_threads.size() )
+              throw_error("save", "A process is already running. Stop it first.");
 
-          if ( proc_threads.size() )
-            throw_error("apply", "A process is already running. Stop it first.");
+            poptmx::OptionTable table = args.save_table;
+            table.parse(aargc, aargv);
+            clargs::check_save(table);
+            save_results();
 
-          g.color=0;
-          bool invert(false);
-          poptmx::OptionTable table = args.color_table;
-          table.add(poptmx::OPTION, &invert, 'i', "invert", "Inverts mask", "");
-          table.parse(aargc, aargv);
+          } else if ( string(aargv[0]) == "apply" ) {
 
-          apply_mask(invert);
+            if ( proc_threads.size() )
+              throw_error("apply", "A process is already running. Stop it first.");
 
+            g.color=0;
+            bool invert(false);
+            poptmx::OptionTable table = args.color_table;
+            table.add(poptmx::OPTION, &invert, 'i', "invert", "Inverts mask", "");
+            table.parse(aargc, aargv);
 
-        } else if ( string(aargv[0]) == "reset" ) {
-
-          if ( proc_threads.size() )
-            throw_error("reset", "A process is already running. Stop it first.");
-
-          operate_wvol( in_zeroing_thread );
-
-        } else if ( string(aargv[0]) == "start" ) {
-
-          if ( proc_threads.size() )
-            throw_error("start", "A process is already running. Stop it first.");
-
-          g.radius = 0;
-          g.radiusM = 0;
-          g.color = 0;
-          g.minval = -1;
-          g.maxval = -1;
-          g.minggrad = -1;
-          g.maxggrad = -1;
-          g.stopProcessing = false;
-          g.start.clear();
-          g.stop.clear();
-
-          poptmx::OptionTable table = args.proc_table;
-          table.parse(aargc, aargv);
-          clargs::check_proc(table);
-
-          operate_wvol( in_wiping_thread );
-          prepare_shift_volumes();
-
-          g.beverbose = false;
-
-          start_process();
-
-        } else if ( string(aargv[0]) == "stop" ) {
-
-          g.beverbose = beverbose;
-          g.stopProcessing = true;
-          finish_process();
-
-        } else if ( string(aargv[0]) == "slice" ) {
-
-          Point3D cross;
-          bool sgrad=false;
-          bool original=false;
-          poptmx::OptionTable table;
-          table
-            .add(poptmx::ARGUMENT, &cross, "point", "slices through this point", "")
-            .add(poptmx::OPTION, &original, 'o', "original",
-                "Save slices through the data volume, not mask.", "")
-            .add(poptmx::ARGUMENT, &sgrad, "gradient", "Saves gradient of the original volume", "");
-
-          table.parse(aargc, aargv);
-
-          if ( ! cross.inVolume(vshape) )
-            cross = g.cross_point;
-
-          Map8U yz( g.ivol.shape()(0), g.ivol.shape()(1) );
-          Map8U xz( g.ivol.shape()(0), g.ivol.shape()(2) );
-          Map8U xy( g.ivol.shape()(1), g.ivol.shape()(2) );
-
-          if (sgrad) {
+            apply_mask(invert);
 
 
+          } else if ( string(aargv[0]) == "reset" ) {
+
+            if ( proc_threads.size() )
+              throw_error("reset", "A process is already running. Stop it first.");
+
+            operate_wvol( in_zeroing_thread );
+
+          } else if ( string(aargv[0]) == "start" ) {
+
+            if ( proc_threads.size() )
+              throw_error("start", "A process is already running. Stop it first.");
+
+            g.radius = 0;
+            g.radiusM = 0;
+            g.color = 0;
+            g.minval = -1;
+            g.maxval = -1;
+            g.minggrad = -1;
+            g.maxggrad = -1;
+            g.stopProcessing = false;
+            g.start.clear();
+            g.stop.clear();
+
+            poptmx::OptionTable table = args.proc_table;
+            table.parse(aargc, aargv);
+            clargs::check_proc(table);
+
+            operate_wvol( in_wiping_thread );
+            prepare_shift_volumes();
+
+            g.beverbose = false;
+
+            start_process();
+
+          } else if ( string(aargv[0]) == "stop" ) {
+
+            g.beverbose = beverbose;
+            g.stopProcessing = true;
+            finish_process();
+
+          } else if ( string(aargv[0]) == "wait" ) {
+
+            g.beverbose = beverbose;
+            printf("Waiting ... ");
+            finish_process();
+            printf("Done");
+
+          } else if ( string(aargv[0]) == "slice" ) {
+
+            Point3D cross;
+            bool sgrad=false;
+            bool original=false;
+            poptmx::OptionTable table;
+            table
+              .add(poptmx::ARGUMENT, &cross, "point", "slices through this point", "")
+              .add(poptmx::OPTION, &original, 'o', "original",
+                  "Save slices through the data volume, not mask.", "")
+              .add(poptmx::ARGUMENT, &sgrad, "gradient", "Saves gradient of the original volume", "");
+
+            table.parse(aargc, aargv);
+
+            if ( ! cross.inVolume(vshape) )
+              cross = g.cross_point;
+
+            Map8U yz( g.ivol.shape()(0), g.ivol.shape()(1) );
+            Map8U xz( g.ivol.shape()(0), g.ivol.shape()(2) );
+            Map8U xy( g.ivol.shape()(1), g.ivol.shape()(2) );
+
+            if (sgrad) {
+
+
+
+
+            } else {
+
+              const Volume8U & voltosave = original ? g.ivol : g.wvol;
+              yz = voltosave( Range::all(), Range::all(), cross.x() ).copy();
+              SaveImage(".yz.tif", yz);
+              xz = voltosave( Range::all(), cross.y(), Range::all() ).copy();
+              SaveImage(".xz.tif", xz);
+              xy = voltosave( cross.z(), Range::all(), Range::all() ).copy();
+              SaveImage(".xy.tif", xy);
+
+            }
 
 
           } else {
 
-            const Volume8U & voltosave = original ? g.ivol : g.wvol;
-            yz = voltosave( Range::all(), Range::all(), cross.x() ).copy();
-            SaveImage(".yz.tif", yz);
-            xz = voltosave( Range::all(), cross.y(), Range::all() ).copy();
-            SaveImage(".xz.tif", xz);
-            xy = voltosave( cross.z(), Range::all(), Range::all() ).copy();
-            SaveImage(".xy.tif", xy);
+            printf ( "  Unknown command \"%s\". Possible commands are: start, stop, apply, save, slice.\n", aargv[0] );
 
           }
 
-
-        } else {
-
-          printf ( "  Unknown command \"%s\". Possible commands are: start, stop, apply, save, slice.\n", aargv[0] );
-
         }
 
-      }
-      catch (FloodErr err) {}
-      catch (poptmx::Err err) {}
+        catch (FloodErr err) {}
+        catch (poptmx::Err err) {}
 
-      free(lns);
+      }
+
+      free(flns);
       free(aargv);
 
     }

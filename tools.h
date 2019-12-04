@@ -527,7 +527,7 @@ inline int _conversion (Sphere* _val, const std::string & in) {
     scanres = sscanf( in.c_str(), "%i,%i,%i,%i", &x, &y, &z, &r);
   if ( scanres < 3 || r<0 )
     return -1;
-  _val->center = Point3D(y,x,z);
+  _val->center = Point3D(z,y,x);
   _val->radius = r;
   return 1;
 }

@@ -161,13 +161,15 @@ void sig2handler(int signum) {
   if (funcf)
     fclose(funcf);
 
-  Map8U yz( g.wvol.shape()(2), g.wvol.shape()(1) );
-  yz = g.wvol( pnt.x(), Range::all(), Range::all() ).transpose(secondDim, firstDim) ;
+  Map8U yz( g.ivol.shape()(0), g.ivol.shape()(1) );
+  Map8U xz( g.ivol.shape()(0), g.ivol.shape()(2) );
+  Map8U xy( g.ivol.shape()(1), g.ivol.shape()(2) );
+
+  yz = g.wvol( Range::all(), Range::all(), pnt.x() ).copy();
   SaveImage(".yz.tif", yz);
-  Map8U xz( g.wvol.shape()(2), g.wvol.shape()(0) );
-  xz = g.wvol( Range::all(), pnt.y(), Range::all() ).transpose(secondDim, firstDim) ;
+  xz = g.wvol( Range::all(), pnt.y(), Range::all() ).copy();
   SaveImage(".xz.tif", xz);
-  Map8U xy = g.wvol( Range::all(), Range::all(), pnt.z() ).copy();
+  xy = g.wvol( pnt.z(), Range::all(), Range::all() ).copy();
   SaveImage(".xy.tif", xy);
 
   printf("Written slices through (%i, %i, %i) point."
@@ -189,6 +191,7 @@ void * in_zeroing_thread (void * _thread_args) {
   while ( wdat != wend )
     *wdat++ = 0;
 
+  return 0;
 
 }
 
@@ -208,6 +211,8 @@ void * in_wiping_thread (void * _thread_args) {
   const uint8_t * wend = g.wvol.data() + min( g.wvol.size(), start + chunk );
   while ( wdat != wend )
     *wdat++ &= mask;
+
+  return 0;
 
 }
 
@@ -231,6 +236,8 @@ void * in_apply_thread (void * _thread_args) {
     wdat++;
     idat++;
   }
+
+  return 0;
 
 }
 
@@ -269,13 +276,13 @@ void * in_write_thread (void * _thread_args) {
     throw_error("write thread", "Inappropriate thread function arguments.");
 
   const Shape2D imgsh(g.ivol.extent(secondDim) , g.ivol.extent(thirdDim));
-  Map8U img(imgsh), wmg(imgsh);
+  Map8U img(imgsh);
   Path outPath;
 
   long int idx;
   while ( dist->distribute(&idx) ) {
 
-    wmg = g.wvol(idx, Range::all(), Range::all());
+    Map8U wmg = g.wvol(idx, Range::all(), Range::all());
 
     if ( ! g.out_filled.empty() ) {
       for ( long int sh0 = 0 ; sh0 < imgsh(0) ; sh0++)
@@ -302,6 +309,7 @@ void * in_write_thread (void * _thread_args) {
 
   }
 
+  return 0;
 
 }
 

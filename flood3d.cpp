@@ -174,18 +174,6 @@ public:
         schedule.push( g.start[cpnt] );
   }
 
-  /*
-  int register_thread() {
-    pthread_mutex_lock( & picklock );
-    if (thread_counter >= g.run_threads) // must never happen
-      throw_error("Proc thread registration", "thread counter more than max number of threads.");
-    inwork[thread_counter] = 1;
-    const int ret = thread_counter++;
-    pthread_mutex_unlock( & picklock );
-    return ret;
-  }
-  */
-
 
   bool distribute( Point3D * pnt ) {
 
@@ -212,61 +200,105 @@ public:
 
   }
 
-  void collect( const Point3D & pnt, int ffrad) {
+    bool distribute( vector<Point3D> & pnts ) {
 
-    list<Point3D> add_to_schedule;
+    bool ret = true;
 
-    if ( ffrad ) {
+    pthread_mutex_lock( & picklock );
 
-      Point3D pntt;
+    while ( schedule.empty() && thinwork )
+      pthread_cond_wait(&check_again, &picklock);
 
-      #define scheduleMe( shift1, shift2, shift3 ) \
-        pntt = pnt + Point3D(shift1, shift2, shift3); \
-        if ( pntt.inVolume(g.wvol.shape() ) && \
-           ! ( g.wvol(pntt) & SCHEDULED ) ) { \
-        add_to_schedule.push_back(pntt); \
-        g.wvol(pntt) |= SCHEDULED; \
-      }
-
-      scheduleMe( 1, 0, 0);
-      scheduleMe(-1, 0, 0);
-      scheduleMe( 0, 1, 0);
-      scheduleMe( 0,-1, 0);
-      scheduleMe( 0, 0, 1);
-      scheduleMe( 0, 0,-1);
-
-      const vector<Point3D> & tomark = g.markPoints( spn(pnt, 1, 0, 0), spn(pnt,-1, 0, 0),
-                                                     spn(pnt, 0, 1, 0), spn(pnt, 0,-1, 0),
-                                                     spn(pnt, 0, 0, 1), spn(pnt, 0, 0,-1) );
-      vector<Point3D>::const_iterator it = tomark.begin();
-      while ( it != tomark.end() ) {
-        Point3D tpnt( (*it++) + pnt );
-        if ( tpnt.inVolume(g.ivol.shape()) )
-          g.wvol(tpnt) |= FILLED;  // it works MUCH faster if done without thread locking. Has seen no difference
-      }
-
+    if ( schedule.empty() ) {
+      ret = false;
     } else {
-
-      // mark all on the boundary to the nearest.
-
+      const int sz = std::max( schedule.size() / g.run_threads, ulong(1) );
+      pnts.resize(sz);
+      for (int idx=0 ; idx < sz ; idx++) {
+        pnts[idx] = schedule.front();
+        schedule.pop();
+      }
+      thinwork++;
     }
 
+    pthread_mutex_unlock( & picklock );
+    pthread_cond_signal( & check_again ) ; // do i need it here?
+
+    return ret;
+
+  }
+
+  void schedulePoint(list<Point3D> & add_to_schedule, const Point3D & pnt, int ffrad) {
+
+    if ( ! ffrad )
+      return;
+
+    Point3D pntt;
+    #define scheduleMe( shift1, shift2, shift3 ) \
+      pntt = pnt + Point3D(shift1, shift2, shift3); \
+      if ( pntt.inVolume(g.wvol.shape() ) && \
+         ! ( g.wvol(pntt) & SCHEDULED ) ) { \
+      add_to_schedule.push_back(pntt); \
+      g.wvol(pntt) |= SCHEDULED; \
+    }
+
+    scheduleMe( 1, 0, 0);
+    scheduleMe(-1, 0, 0);
+    scheduleMe( 0, 1, 0);
+    scheduleMe( 0,-1, 0);
+    scheduleMe( 0, 0, 1);
+    scheduleMe( 0, 0,-1);
+
+    #undef scheduleMe
+
+    const vector<Point3D> & tomark = g.markPoints( spn(pnt, 1, 0, 0), spn(pnt,-1, 0, 0),
+                                                   spn(pnt, 0, 1, 0), spn(pnt, 0,-1, 0),
+                                                   spn(pnt, 0, 0, 1), spn(pnt, 0, 0,-1) );
+    vector<Point3D>::const_iterator it = tomark.begin();
+    while ( it != tomark.end() ) {
+      Point3D tpnt( (*it++) + pnt );
+      if ( tpnt.inVolume(g.ivol.shape()) )
+        g.wvol(tpnt) |= FILLED ;  // it works MUCH faster if done without thread locking. Has seen no difference
+    }
+
+    g.wvol(pnt) |= CHECKED;
+
+  }
+
+  void collect_common(const list<Point3D> & add_to_schedule, uint ptsinth=1) {
 
     list<Point3D>::const_iterator itl = add_to_schedule.begin();
     pthread_mutex_lock( & picklock );
     while ( itl != add_to_schedule.end() )
       schedule.push(*itl++);
     thinwork--;
-    if ( ffrad )
-      g.wvol(pnt) |= CHECKED;
     pthread_mutex_unlock( & picklock );
     pthread_cond_signal( & check_again ) ;
 
     pthread_mutex_lock( & proglock );
-    bar.update();
+    bar.update( bar.progress() + ptsinth );
+    //std::cerr << ptsinth << "\n";
     pthread_mutex_unlock( & proglock );
 
   }
+
+  void collect( const Point3D & pnt, int ffrad) {
+    list<Point3D> add_to_schedule;
+    schedulePoint(add_to_schedule, pnt, ffrad);
+    collect_common(add_to_schedule);
+  }
+
+
+  void collect( const vector<Point3D> & pnts, const vector<int> & ffrads) {
+    const size_t sz = pnts.size();
+    if ( ffrads.size() != sz ) // must never happen
+      throw_bug(__FUNCTION__);
+    list<Point3D> add_to_schedule;
+    for (int idx=0 ; idx < sz ; idx++)
+      schedulePoint(add_to_schedule, pnts[idx], ffrads[idx]);
+    collect_common(add_to_schedule, sz);
+  }
+
 
   void finilizeProgressBar() {
     bar.update();
@@ -289,9 +321,13 @@ void * in_proc_thread (void * _thread_args) {
   ProcDistributor *  dist = (ProcDistributor*) _thread_args;
   if (!dist)
     throw_error("process thread", "Inappropriate thread function arguments.");
-  Point3D pnt;
-  while ( dist->distribute(&pnt) && ! g.stopProcessing )
-    dist->collect( pnt, checkMe(pnt) );
+  vector<Point3D> pnts;
+  while ( dist->distribute(pnts) && ! g.stopProcessing ) {
+    vector<int> pntsChk(pnts.size());
+    for (int idx=0 ; idx < pnts.size() ; idx++)
+      pntsChk[idx] = checkMe(pnts[idx]);
+    dist->collect(pnts, pntsChk);
+  }
   return 0;
 }
 
@@ -384,33 +420,27 @@ void prepare_shift_volumes() {
 
 
 void read_input() {
-
   vector<pthread_t> threads(g.run_threads);
-
-  // Read images to the array.
   ReadWriteDistributor rwdist;
   rwdist.PrepareForRead();
   for (int ith = 0 ; ith < g.run_threads ; ith++)
     if ( pthread_create( & threads[ith], NULL, in_read_thread, &rwdist ) )
       throw_error("Read volume", "Can't create thread.");
-  for (int ith = 0 ; ith < threads.size() ; ith++)
+  for (int ith = 0 ; ith < g.run_threads ; ith++)
     pthread_join( threads[ith], 0);
 
 }
 
 
 void save_results() {
-
   vector<pthread_t> threads(g.run_threads);
   ReadWriteDistributor rwdist;
   rwdist.PrepareForWrite();
   for (int ith = 0 ; ith < g.run_threads ; ith++)
     if ( pthread_create( & threads[ith], NULL, in_write_thread, &rwdist ) )
       throw_error("Write volume", "Can't create thread.");
-
-    for (int ith = 0 ; ith < threads.size() ; ith++)
+  for (int ith = 0 ; ith < g.run_threads ; ith++)
     pthread_join( threads[ith], 0);
-
 }
 
 
@@ -518,7 +548,7 @@ int main(int argc, char *argv[]) {
     int aargc;
     std::string sflns;
 
-    while ( flns = readline("enter a command > ") ) {
+    while ( (flns = readline("enter a command > ")) ) {
 
       if (flns && *flns) {
         add_history (flns);

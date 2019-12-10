@@ -36,7 +36,7 @@
 #include <poptmx.h>
 #include <pthread.h>
 #include <queue>
-#include <stdint.h> 
+#include <stdint.h>
 #include <vector>
 
 #include "blitz-long/blitz/array.h"
@@ -66,7 +66,7 @@ const unsigned char ISBAD     = 0b00001000;
 
 
 
- 
+
 void prdn( int a );
 void prdn( const std::string & msg );
 
@@ -114,7 +114,7 @@ throw_error(const std::string & mod, const std::string & msg);
 void
 throw_bug(const std::string & mod);
 
- 
+
 /// \brief Constructs the warning and reports it.
 ///
 /// @param mod Module where the error happened
@@ -378,8 +378,8 @@ class  ProgressBar {
 private:
   bool showme;      ///< Tells if the bar should be shown.
   std::string message;    ///< Description of the process.
-  long int steps;     ///< Total number of steps in the progress.
-  long int step;        ///< Current step.
+  uint64_t steps;     ///< Total number of steps in the progress.
+  uint64_t step;        ///< Current step.
   int waswidth;     ///< The width of the terminal in the previous step
   int reservedChs;    ///< Symbols for the constant part of the PB.
   std::string fmt;      ///< Format string used to print the numbers.
@@ -388,10 +388,10 @@ private:
 
 public:
 
-  ProgressBar(bool _showme=false, const std::string & _message="", long int _steps=0);
+  ProgressBar(bool _showme=false, const std::string & _message="", uint64_t _steps=0);
 
-  void update(long int curstep=0);  ///< Updates the progress bar
-  inline int progress() const {return step;}
+  void update(uint64_t curstep=0);  ///< Updates the progress bar
+  inline uint64_t progress() const {return step;}
   void done();          ///< Finalizes the progress bar.
   std::string print_line();
 
@@ -406,7 +406,7 @@ public:
 ///
 /// @return Image sizes.
 ///
-Shape2D 
+Shape2D
 ImageSizes(const Path & filename);
 
 
@@ -450,52 +450,52 @@ SaveImage(const Path & filename, const Map8U & storage);
 
 
 class Point3D {
-  
+
 private:
-  
+
   blitz::TinyVector<int,3> point;
-  
+
 public:
-  
+
   inline Point3D(long int z=0, long int y=0, long int x=0) : point(z,y,x) {};
-  
+
   inline int x() const { return point(2); }
-  
+
   inline int y() const { return point(1); }
-  
+
   inline int z() const { return point(0); }
-  
+
   inline bool inVolume(const Shape3D & shape) const {
      return x() >= 0 && x() < shape(2) &&
             y() >= 0 && y() < shape(1) &&
             z() >= 0 && z() < shape(0);
   }
-  
+
   inline int r2() const { return x()*x() + y()*y() + z()*z() ; }
-  
+
   inline operator blitz::TinyVector<long int,3> () const { return point; }
-  
-  inline const Point3D operator+(const Point3D &other) const { 
+
+  inline const Point3D operator+(const Point3D &other) const {
     return Point3D( point(0)+other.point(0), point(1)+other.point(1), point(2)+other.point(2) );
   }
-  
-  inline const Point3D operator-(const Point3D &other) const { 
-    return Point3D( point(0)-other.point(0), point(1)-other.point(1), point(2)-other.point(2) ); 
+
+  inline const Point3D operator-(const Point3D &other) const {
+    return Point3D( point(0)-other.point(0), point(1)-other.point(1), point(2)-other.point(2) );
   }
-  
-  inline const bool operator==(const Point3D &other) const { 
+
+  inline const bool operator==(const Point3D &other) const {
     return point(0) == other.point(0) &&
-           point(1) == other.point(1) && 
-           point(2) == other.point(2) ; 
+           point(1) == other.point(1) &&
+           point(2) == other.point(2) ;
   }
-  
+
 };
 
 
 
 
 inline std::string type_desc (Point3D*) {
-  return "UINT:UINT:UINT";  
+  return "UINT:UINT:UINT";
 }
 
 inline int _conversion (Point3D* _val, const std::string & in) {
@@ -517,11 +517,11 @@ struct Sphere {
 
 
 inline std::string type_desc (Sphere*) {
-  return "UINT:UINT:UINT[:UINT]";  
+  return "UINT:UINT:UINT[:UINT]";
 }
 
 inline int _conversion (Sphere* _val, const std::string & in) {
-  int x, y, z, r=0;  
+  int x, y, z, r=0;
   int scanres = sscanf( in.c_str(), "%i:%i:%i:%i", &x, &y, &z, &r);
   if (scanres < 3) // try , instead of :
     scanres = sscanf( in.c_str(), "%i,%i,%i,%i", &x, &y, &z, &r);
@@ -546,48 +546,48 @@ inline int _conversion (Sphere* _val, const std::string & in) {
 
 
 class Point2D {
-  
+
 private:
-  
+
   blitz::TinyVector<int,2> point;
-  
+
 public:
-  
+
   inline Point2D(long int x=0, long int y=0) : point(x,y) {};
-  
+
   inline int x() const { return point(0); }
-  
+
   inline int y() const { return point(1); }
-  
+
   inline bool inMap(const Shape2D & shape) const {
      return x() >= 0 && x() < shape(0) &&
             y() >= 0 && y() < shape(1) ;
   }
-  
+
   inline int r2() const { return x()*x() + y()*y() ; }
-  
+
   inline operator blitz::TinyVector<long int,2> () const { return point; }
-  
-  inline const Point2D operator+(const Point2D &other) const { 
+
+  inline const Point2D operator+(const Point2D &other) const {
     return Point2D( point(0)+other.point(0), point(1)+other.point(1) );
   }
-  
-  inline const Point2D operator-(const Point2D &other) const { 
-    return Point2D( point(0)-other.point(0), point(1)-other.point(1)); 
+
+  inline const Point2D operator-(const Point2D &other) const {
+    return Point2D( point(0)-other.point(0), point(1)-other.point(1));
   }
-  
-  inline const bool operator==(const Point2D &other) const { 
+
+  inline const bool operator==(const Point2D &other) const {
     return point(0) == other.point(0) &&
-           point(1) == other.point(1) ; 
+           point(1) == other.point(1) ;
   }
-  
+
 };
 
 
 
 
 inline std::string type_desc (Point2D*) {
-  return "UINT:UINT";  
+  return "UINT:UINT";
 }
 
 inline int _conversion (Point2D* _val, const std::string & in) {
@@ -609,11 +609,11 @@ struct Disk {
 
 
 inline std::string type_desc (Disk*) {
-  return "UINT:UINT[:UINT]";  
+  return "UINT:UINT[:UINT]";
 }
 
 inline int _conversion (Disk* _val, const std::string & in) {
-  int x, y, r=0;  
+  int x, y, r=0;
   int scanres = sscanf( in.c_str(), "%i:%i:%i", &x, &y, &r);
   if (scanres < 2) // try , instead of :
     scanres = sscanf( in.c_str(), "%i,%i,%i", &x, &y, &r);

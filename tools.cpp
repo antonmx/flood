@@ -391,7 +391,7 @@ toString(const string fmt, ...){
 /// @param _message The description of the progress.
 /// @param _steps Number of steps in the progress. If 0 then unknown.
 ///
-ProgressBar::ProgressBar(bool _showme, const string & _message, long int _steps) :
+ProgressBar::ProgressBar(bool _showme, const string & _message, uint64_t _steps) :
   showme(_showme),
   message(_message),
   steps(_steps)
@@ -426,7 +426,7 @@ string ProgressBar::print_line() {
   int progln = getwidth() - reservedChs;
   if ( progln <= 3 )  return ""; // if we have a very narrow terminal
 
-    if ( steps && step >= steps ) {
+  if ( steps && step >= steps ) {
     done();
     return "";
   }
@@ -452,9 +452,9 @@ string ProgressBar::print_line() {
 /// @param curstep Current step. Advances +1 if zero.
 ///
 void
-ProgressBar::update(long curstep){
+ProgressBar::update(uint64_t curstep){
 
-  step = curstep ? curstep+1 : step + 1;
+  step = (curstep ? curstep : step) + 1;
 
   if ( !showme || !reservedChs ) return; // Uninitialized progress bar.
 
@@ -576,7 +576,7 @@ allocateBigVolume( const Shape3D & shape, Volume8U & data ) {
       close (mapfile);
       throw_error("temp file",
                 "Could not set size of the  temporary file"
-                " \"" + std::string(tmpfilename) + "\". You need " + toString((long unsigned)size) +
+                " \"" + std::string(tmpfilename) + "\". You need " + toString((uint64_t)size) +
                 "bytes on the hard disk. " + tempdesc);
     }
 

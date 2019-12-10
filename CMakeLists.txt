@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 2.6)
+cmake_minimum_required (VERSION 3.0)
 
 project(flood)
 
@@ -53,13 +53,11 @@ check_include_file(poptmx.h HAVE_POPTMX_H ${CMAKE_CXX_FLAGS})
 if( "${HAVE_POPTMX_H}" MATCHES "HAVE_POPTMX_H-NOTFOUND" )
   message(FATAL_ERROR "Poptmx header not found. https://github.com/antonmx/poptmx")
 endif()
-  
-  
-  
-  
-  
-  
-  
+
+
+
+
+
 add_executable(flood3d flood3d.cpp tools.cpp tools3d.cpp)
 target_link_libraries(flood3d
   ${ImageMagick_LIBRARIES}
@@ -68,7 +66,7 @@ target_link_libraries(flood3d
   pthread
   readline
 )
-
+add_dependencies(flood3d blitz-long)
 install(TARGETS flood3d RUNTIME DESTINATION bin)
 
 
@@ -79,8 +77,7 @@ target_link_libraries(flood2d
   poptmx
   pthread
 )
-
-
+add_dependencies(flood2d blitz-long)
 install(TARGETS flood2d RUNTIME DESTINATION bin)
 
 

@@ -1,10 +1,11 @@
-cmake_minimum_required (VERSION 3.0)
+cmake_minimum_required (VERSION 3.1)
 
 project(flood)
 
 set(VERSION 0.1.0)
 
-SET( CMAKE_MODULE_PATH ${flood_SOURCE_DIR})
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_MODULE_PATH ${flood_SOURCE_DIR})
 
 add_custom_target(dist
     COMMAND git archive --prefix=${PROJECT_NAME}.${VERSION}/ HEAD
@@ -57,27 +58,36 @@ endif()
 
 
 
+add_library(flood SHARED tools.h tools.cpp algorithm3d.h algorithm3d.cpp)
+target_link_libraries(flood
+  ${ImageMagick_LIBRARIES}
+  tiff
+  pthread
+)
+add_dependencies(flood blitz-long)
+install(TARGETS flood LIBRARY DESTINATION lib)
 
-add_executable(flood3d flood3d.cpp tools.cpp tools3d.cpp)
+
+add_executable(flood3d flood3d.cpp tools.h tools.cpp algorithm3d.h algorithm3d.cpp)
 target_link_libraries(flood3d
   ${ImageMagick_LIBRARIES}
   tiff
-  poptmx
   pthread
+  poptmx
   readline
 )
-add_dependencies(flood3d blitz-long)
+add_dependencies(flood blitz-long)
 install(TARGETS flood3d RUNTIME DESTINATION bin)
 
 
-add_executable(flood2d flood2d.cpp tools.cpp)
-target_link_libraries(flood2d
-  ${ImageMagick_LIBRARIES}
-  tiff
-  poptmx
-  pthread
-)
-add_dependencies(flood2d blitz-long)
-install(TARGETS flood2d RUNTIME DESTINATION bin)
+#add_executable(flood2d flood2d.cpp tools.cpp)
+#target_link_libraries(flood2d
+#  ${ImageMagick_LIBRARIES}
+#  tiff
+#  poptmx
+#  pthread
+#)
+#add_dependencies(flood2d blitz-long)
+#install(TARGETS flood2d RUNTIME DESTINATION bin)
 
 

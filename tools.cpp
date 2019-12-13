@@ -86,6 +86,17 @@ void prdn( const std::string & msg ) {
   prevTV=nowTV;
 }
 
+void prdnc( int a ) {
+  printf("%i ", a);
+  fflush(stdout);
+}
+
+
+void prdnc( const std::string & msg ) {
+  printf("%s ", msg.c_str());
+  fflush(stdout);
+}
+
 
 
 
@@ -379,6 +390,210 @@ toString(const string fmt, ...){
 
 
 
+#ifndef NUL
+#define NUL '\0'
+#endif
+
+static char const nomem[] = "no memory for %lu byte allocation\n";
+
+static bool
+copy_raw_string(char ** dest_p, char ** src_p);
+
+static bool
+copy_cooked_string(char ** dest_p, char ** src_p);
+
+static inline void *
+Xmalloc(size_t sz)
+{
+    void * res = malloc(sz);
+    if (res == NULL) {
+        fprintf(stderr, nomem, sz);
+        exit(EXIT_FAILURE);
+    }
+    return res;
+}
+
+static inline void *
+Xrealloc(void * ptr, size_t sz)
+{
+    void * res = realloc(ptr, sz);
+    if (res == NULL) {
+        fprintf(stderr, nomem, sz);
+        exit(EXIT_FAILURE);
+    }
+    return res;
+}
+
+bool
+string_to_argv(char const * str, int * argc_p, char *** argv_p)
+{
+    int     argc = 0;
+    int     act  = 10;
+    char ** res  = (char**) Xmalloc( sizeof(char *) * 10 );
+    char ** argv = res;
+    char *  scan;
+    char *  dest;
+    bool err;
+
+    while (isspace((unsigned char)*str))  str++;
+    str = scan = strdup(str);
+
+    for (;;) {
+        while (isspace((unsigned char)*scan))  scan++;
+        if (*scan == NUL)
+            break;
+
+        if (++argc >= act) {
+            act += act / 2;
+            res  = (char**) Xrealloc(res, act * sizeof(char *));
+            argv = res + (argc - 1);
+        }
+
+        *(argv++) = dest = scan;
+
+        for (;;) {
+            char ch = *(scan++);
+            switch (ch) {
+            case NUL:
+                goto done;
+
+            case '\\':
+                if ( (*(dest++) = *(scan++)) == NUL)
+                    goto done;
+                break;
+
+            case '\'':
+                err = copy_raw_string(&dest, &scan);
+                if (err)
+                    goto error_leave;
+                break;
+
+            case '"':
+                err = copy_cooked_string(&dest, &scan);
+                if (err)
+                    goto error_leave;
+                break;
+
+            case ' ':
+            case '\t':
+            case '\n':
+            case '\f':
+            case '\r':
+            case '\v':
+            case '\b':
+                goto token_done;
+
+            default:
+                *(dest++) = ch;
+            }
+        }
+
+    token_done:
+        *dest = NUL;
+    }
+
+done:
+
+    *argv_p = res;
+    *argc_p = argc;
+    *argv   = NULL;
+    if (argc == 0)
+        free((void *)str);
+
+    return false;
+
+error_leave:
+
+    free(res);
+    free((void *)str);
+    return err;
+}
+
+static bool
+copy_raw_string(char ** dest_p, char ** src_p)
+{
+    for (;;) {
+        char ch = *((*src_p)++);
+
+        switch (ch) {
+        case NUL: return true;
+        case '\'':
+            *(*dest_p) = NUL;
+            return false;
+
+        case '\\':
+            ch = *((*src_p)++);
+            switch (ch) {
+            case NUL:
+                return true;
+
+            default:
+                /*
+                 * unknown/invalid escape.  Copy escape character.
+                 */
+                *((*dest_p)++) = '\\';
+                break;
+
+            case '\\':
+            case '\'':
+                break;
+            }
+            /* FALLTHROUGH */
+
+        default:
+            *((*dest_p)++) = ch;
+            break;
+        }
+    }
+}
+
+static char
+escape_convt(char ** src_p)
+{
+    char ch = *((*src_p)++);
+
+    /*
+     *  Escape character is always eaten.  The next character is sometimes
+     *  treated specially.
+     */
+    switch (ch) {
+    case 'a': ch = '\a'; break;
+    case 'b': ch = '\b'; break;
+    case 't': ch = '\t'; break;
+    case 'n': ch = '\n'; break;
+    case 'v': ch = '\v'; break;
+    case 'f': ch = '\f'; break;
+    case 'r': ch = '\r'; break;
+    }
+
+    return ch;
+}
+
+
+static bool
+copy_cooked_string(char ** dest_p, char ** src_p)
+{
+    for (;;) {
+        char ch = *((*src_p)++);
+        switch (ch) {
+        case NUL: return true;
+        case '"':
+            *(*dest_p) = NUL;
+            return false;
+
+        case '\\':
+            ch = escape_convt(src_p);
+            if (ch == NUL)
+                return true;
+            /* FALLTHROUGH */
+
+        default:
+            *((*dest_p)++) = ch;
+            break;
+        }
+    }
+}
+
 
 
 
@@ -527,72 +742,6 @@ ProgressBar::getwidth(){
 
 
 
-
-int
-allocateBigVolume( const Shape3D & shape, Volume8U & data ) {
-
-  const std::string modname="Big volume allocation";
-
-  int mapfile = 0;
-
-  try { data.resize(shape); }
-  catch(std::bad_alloc err) {
-
-    warn (modname,
-          "Failed to allocate memory. Trying to play with the memory mapped to file.");
-
-    const char * tmpenv =  "TMPDIR";
-    const std::string tempdesc = "You can control the path to the temporary file via"
-                            " the environment variable \"" + (std::string) tmpenv + "\".";
-    const char * tmpdir = getenv (tmpenv);
-    if ( ! tmpdir ) tmpdir = "./" ;
-    if ( strlen(tmpdir) >= 248 ) { // little under the maximum length (256)
-      warn("temp file", (std::string)
-        "The environment variable \"" + tmpenv + "\" is too long:\n"
-        + tmpdir + "\n"
-        "Switching to the default one \"./\". " + tempdesc);
-      tmpdir = "./";
-    }
-    char tmpfilename[256]; // maximum file name length
-    strcpy(tmpfilename, tmpdir);
-    if ( tmpfilename[ strlen(tmpfilename)-1 ] != '/' )
-      strcpy(tmpfilename+strlen(tmpfilename), "/");
-    strcpy(tmpfilename+strlen(tmpfilename), "XXXXXX");
-
-    mapfile = mkstemp(tmpfilename);
-    if ( mapfile < 0 )
-      throw_error("temp file", "Could not open temporary file"
-                  " \"" + std::string(tmpfilename) + "\". " + tempdesc);
-    if ( unlink(tmpfilename) < 0 )
-    warn("temp file", "IMPORTANT! Could not unlink temporary file"
-                      " \"" + std::string(tmpfilename) + "\". Don't forget"
-                      " to delete it after the program has finished.");
-
-    const off_t size = shape(0) * shape(1) * shape(2) * sizeof(uint8_t);
-
-    if ( lseek(mapfile, size, SEEK_SET) != size ||
-         write(mapfile, "END", 3) != 3 ) {
-      // Should I pad the holes ???
-      close (mapfile);
-      throw_error("temp file",
-                "Could not set size of the  temporary file"
-                " \"" + std::string(tmpfilename) + "\". You need " + toString((uint64_t)size) +
-                "bytes on the hard disk. " + tempdesc);
-    }
-
-    uint8_t * datap = (uint8_t*) mmap( 0, size, PROT_WRITE|PROT_READ, MAP_SHARED, mapfile, 0);
-    if ( ! datap || datap == MAP_FAILED ) {
-      close (mapfile);
-      throw_error(modname, "Failed to mmap memory.");
-    }
-
-    data.reference( Volume8U(datap, shape, blitz::neverDeleteData) );
-
-  }
-
-  return mapfile;
-
-}
 
 
 
@@ -819,6 +968,14 @@ SaveImage (const Path & filename, const Map8U & storage) {
     width = storage.columns(),
     hight = storage.rows();
 
+  Map8U _storage;
+  if ( storage.isStorageContiguous()  &&  storage.stride() == Shape2D(width,1) )
+    _storage.reference(storage);
+  else {
+    _storage.resize(storage.shape());
+    _storage = storage;
+  }
+
   const string extension = lower( filename.extension() );
   if ( extension.empty() || extension == ".tif" || extension == ".tiff" ) {
 
@@ -835,7 +992,7 @@ SaveImage (const Path & filename, const Map8U & storage) {
     TIFFSetField(image, TIFFTAG_SAMPLEFORMAT,SAMPLEFORMAT_UINT);
     TIFFSetField(image, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
 
-    int wret = TIFFWriteRawStrip(image, 0, (void*) storage.data(), width*hight);
+    int wret = TIFFWriteRawStrip(image, 0, (void*) _storage.data(), width*hight);
     TIFFClose(image);
     if ( -1 == wret )
       throw_error("save tiff image", "Could not save image to file \"" + filename + "\".");
@@ -848,9 +1005,9 @@ SaveImage (const Path & filename, const Map8U & storage) {
     imag.depth(8);
     imag.magick("TIFF"); // saves to tif if not overwritten by the extension.
 
-  for (blitz::MyIndexType curw = 0 ; curw < width ; curw++)
     for (blitz::MyIndexType curh = 0 ; curh < hight ; curh++)
-      imag.pixelColor(curw, curh, Magick::ColorGray(storage(curh,curw)));
+      for (blitz::MyIndexType curw = 0 ; curw < width ; curw++)
+        imag.pixelColor(curw, curh, Magick::ColorGray(_storage(curh,curw)));
 
     try { imag.write(filename); }
     catch ( Magick::Exception & error) {

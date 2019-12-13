@@ -46,21 +46,11 @@
 
 
 
-const unsigned char FILLED    = 0b10000000;
-const unsigned char CHECKED   = 0b01000000;
-const unsigned char SCHEDULED = 0b00100000;
-const unsigned char ISGOOD    = 0b00010000;
-const unsigned char ISBAD     = 0b00001000;
-
-
-
-
-
-
-
-
-
-
+const uint8_t FILLED    = 0b10000000;
+const uint8_t CHECKED   = 0b01000000;
+const uint8_t SCHEDULED = 0b00100000;
+const uint8_t ISGOOD    = 0b00010000;
+const uint8_t ISBAD     = 0b00001000;
 
 
 
@@ -69,6 +59,8 @@ const unsigned char ISBAD     = 0b00001000;
 
 void prdn( int a );
 void prdn( const std::string & msg );
+void prdnc( int a );
+void prdnc( const std::string & msg );
 
 
 
@@ -223,9 +215,6 @@ cdpath(const Path & dir, const Path & file);
 
 
 
-
-
-
 /// \brief 2D Array with 8bit data.
 ///
 /// Two dimensional array of the ::uchar elements.
@@ -359,12 +348,13 @@ inline std::string toString (long int      n)   { return toString("%li", n); }
 inline std::string toString (int           n)   { return toString("%i", n); }
 inline std::string toString (long unsigned n)   { return toString("%lu", n); }
 inline std::string toString (unsigned      n)   { return toString("%u", n); }
-inline std::string toString (const Shape2D & shp) { return toString("%u, %u", shp(1), shp(0));}
+inline std::string toString (const Shape2D & shp) { return toString("%u, %u", shp(0), shp(1));}
+inline std::string toString (const Shape3D & shp) { return toString("%u, %u, %u", shp(0), shp(1), shp(2));}
 /// \endcond
 
 
 
-
+bool string_to_argv(char const * str, int * argc_p, char *** argv_p);
 
 
 

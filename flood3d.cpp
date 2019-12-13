@@ -28,7 +28,8 @@
 ///
 
 #include "tools.h"
-#include "tools3d.h"
+//#include "tools3d.h"
+#include "algorithm3d.h"
 
 #include <pthread.h>
 #include <queue>
@@ -42,511 +43,688 @@ using namespace std;
 using namespace blitz;
 
 
-
-
-GlobalVariables g;
-
-
-int ggradient( const Point3D & pnt, const Volume8U & vol ) {
-
-  int sum=0, num=0;
-  Point3D tpnt;
-
-  #define adspn(pnt, x, y, z) \
-    tpnt = pnt + Point3D(x, y, z); \
-    if( tpnt.inVolume(vol.shape()) ) { \
-      int gg = vol(pnt) - vol (tpnt) ; \
-      sum+=gg*gg; \
-      num++; \
-    }
-
-  adspn(pnt, 1, 0, 0);
-  adspn(pnt,-1, 0, 0);
-  adspn(pnt, 0, 1, 0);
-  adspn(pnt, 0,-1, 0);
-  adspn(pnt, 0, 0, 1);
-  adspn(pnt, 0, 0,-1);
-
-  return num ? sum/num : 0 ;
-
-}
+static const int run_threads( nof_threads() );
+static Volume8U ivol;
+static Volume8U wvol;
+static Shape3D  volsh;
 
 
 
-bool subcheck( const Point3D & pnt) {
+struct clargs {
 
-  if ( g.wvol(pnt) & ISBAD )
-    return false;
-  if ( g.wvol(pnt) & ISGOOD )
-    return true;
+  Path command;               ///< Command name as it was invoked.
+  bool interactive;
+  vector<Path> inlist;        ///< List of all input images.
+  Path out_filled;       ///< The mask for the output file names.
+  Path out_inverted;
+  Path out_mask;
+  bool beverbose;       ///< Be verbose flag
+  vector<Point3D> start;          ///< Point to start the fill at.
+  vector<Sphere> stop;           ///< Point to stop at.
 
-  const int ggrad = ( g.minggrad >= 0 || g.maxggrad >= 0 ) ? ggradient(pnt, g.ivol) : -1 ;
+  // Parameters to use in the check function.
+  uint radius;
+  uint radiusM;
+  uint color;
+  uint minval;
+  uint maxval;
 
-  bool pass =
-    ( g.minval < 0  ||  g.ivol(pnt) >= g.minval ) &&
-    ( g.maxval < 0  ||  g.ivol(pnt) <= g.maxval ) &&
-    ( g.minggrad < 0  ||  ggrad >= g.minggrad ) &&
-    ( g.maxggrad < 0  ||  ggrad <= g.maxggrad ) ;
+  // sub-tables
+  poptmx::OptionTable proc_table;
+  poptmx::OptionTable save_table;
+  poptmx::OptionTable color_table;
 
-  g.wvol(pnt) |= pass ? ISGOOD : ISBAD ; // can I do it in multithreaded?
+  poptmx::OptionTable table;
 
-  return pass;
-
-}
-
-
-
-inline long int spn(const Point3D & pnt, int zz, int yy, int xx) {
-  Point3D pntinhere( pnt+Point3D( zz,yy,xx) );
-  return
-    pntinhere.inVolume(g.wvol.shape())  &&  g.wvol(pntinhere) & CHECKED
-      ? 1l : 0l ;
-}
-
-// THIS IS THE KEY FUNCTION
-int checkMe(const Point3D & pnt) {
-  const vector<Point3D> & tocheck = g.newPoints( spn(pnt, 1, 0, 0), spn(pnt,-1, 0, 0),
-                                                 spn(pnt, 0, 1, 0), spn(pnt, 0,-1, 0),
-                                                 spn(pnt, 0, 0, 1), spn(pnt, 0, 0,-1) );
-  vector<Point3D>::const_iterator it = tocheck.begin();
-  while ( it != tocheck.end() )  {
-    Point3D tpnt( (*it++) + pnt );
-    if ( tpnt.inVolume(g.ivol.shape()) && ! subcheck(tpnt) )
-      return 0;
-  }
-
-  return 1;
-
-}
-
-
-int nearestBad2(const Point3D & pnt) {
-
-  static const int radius2 = g.radius * g.radius;
-  int closest2 = radius2+1;
-
-  const vector<Point3D> & tocheck = g.newPoints( spn(pnt, 1, 0, 0), spn(pnt,-1, 0, 0),
-                                                 spn(pnt, 0, 1, 0), spn(pnt, 0,-1, 0),
-                                                 spn(pnt, 0, 0, 1), spn(pnt, 0, 0,-1) );
-  vector<Point3D>::const_iterator it = tocheck.begin();
-  while ( it != tocheck.end() )  {
-    const Point3D tpnt( *it + pnt );
-    const int tr2=it->r2();
-    if ( tpnt.inVolume(g.ivol.shape()) && tr2 < closest2 && ! subcheck(tpnt) )
-      closest2 = tr2 ;
-    it++;
-  }
-
-  return closest2;
-
-}
-
-
-
-
-
-
-
-
-
-
-
-class ProcDistributor {
-
-private:
-
-  queue<Point3D> schedule;
-  int thinwork;
-
-  static pthread_mutex_t picklock;
-  static pthread_cond_t check_again;
-  static pthread_mutex_t proglock;
-
-public:
-
-  ProgressBar bar;
-
-  ProcDistributor()
-  : thinwork(0)
-  , bar( g.beverbose , "processing volume", g.ivol.size() )
+  clargs(int argc, char *argv[])
+    : interactive(false)
+    , beverbose(false)
+    , radius(0)
+    , radiusM(0)
+    , color(0)
+    , minval(-1)
+    , maxval(-1)
+    , proc_table()
+    , save_table()
+    , table("3D advanced flood fill.",
+           "Advanced flood fill algorithm implemented for the 3D volume.")
   {
-      for ( int cpnt=0 ; cpnt < g.start.size() ; cpnt++ )
-        schedule.push( g.start[cpnt] );
-  }
+
+    proc_table
+      .add(poptmx::NOTE, "Processing options:")
+      .add(poptmx::OPTION, &start, 's', "start",
+           "Starting point(s) of the fill procedure.", "")
+      .add(poptmx::OPTION, &stop, 'S', "stop",
+           "Stop sphere(s).", "Three coordinates and radius.")
+      .add(poptmx::OPTION, &radius, 'r', "test-radius",
+           "Radius of the test sphere.", "")
+      .add(poptmx::OPTION, &radiusM, 'R', "mark-radius",
+           "Radius of the fill sphere.", "")
+      .add(poptmx::OPTION, &minval, 'm', "minval",
+           "Minimum value.", "")
+      .add(poptmx::OPTION, &maxval, 'M', "maxval",
+           "Maximum value.", "") ;
+
+    color_table
+      .add(poptmx::OPTION, &color, 'c', "color",
+           "Color of the fill volume.",
+           "Instead of masking the volume, paints it with this color.")  ;
+
+    save_table
+      .add(poptmx::NOTE, "Saving options:")
+      .add(color_table)
+      .add(poptmx::OPTION, &out_filled, 'f', "outfilled",
+           "Prefix to output filled.", "", out_filled)
+      .add(poptmx::OPTION, &out_inverted, 'e', "outinvert",
+           "Prefix to output not filled.", "", out_inverted)
+      .add(poptmx::OPTION, &out_mask, 'b', "outmask",
+           "Prefix to output mask.", "Outputs bit mask.", out_mask);
 
 
-  bool distribute( Point3D * pnt ) {
+    table
+      .add(poptmx::NOTE, "ARGUMENTS:")
+      .add(poptmx::ARGUMENT, &inlist, "list", "List of the input images.", "")
 
-    bool ret = true;
+      .add(poptmx::NOTE, "OPTIONS:")
+      .add(poptmx::OPTION, &interactive, 'i', "interactive",
+           "Accepts commands from the standard input.", "")
+      .add(proc_table)
+      .add(save_table)
+      .add_standard_options(&beverbose);
 
-    pthread_mutex_lock( & picklock );
 
-    // while ( schedule.empty() && binary_search(inwork.begin(), inwork.end(), 1) )
-    while ( schedule.empty() && thinwork )
-      pthread_cond_wait(&check_again, &picklock);
-
-    if ( schedule.empty() ) {
-      ret = false;
-    } else {
-      *pnt = schedule.front();
-      schedule.pop();
-      thinwork++;
+    if ( ! table.parse(argc,argv) )
+      exit(0);
+    if ( ! table.count() ) {
+      table.usage();
+      exit(0);
     }
 
-    pthread_mutex_unlock( & picklock );
-    pthread_cond_signal( & check_again ) ; // do i need it here?
+    command = table.name();
 
-    return ret;
+    // <list> : required argument.
+    if ( ! table.count(&inlist) )
+      exit_on_error(command, "Missing required argument: "+table.desc(&inlist)+".");
 
-  }
-
-    bool distribute( vector<Point3D> & pnts ) {
-
-    bool ret = true;
-
-    pthread_mutex_lock( & picklock );
-
-    while ( schedule.empty() && thinwork )
-      pthread_cond_wait(&check_again, &picklock);
-
-    if ( schedule.empty() ) {
-      ret = false;
-    } else {
-      const int sz = std::max( schedule.size() / g.run_threads, ulong(1) );
-      pnts.resize(sz);
-      for (int idx=0 ; idx < sz ; idx++) {
-        pnts[idx] = schedule.front();
-        schedule.pop();
-      }
-      thinwork++;
-    }
-
-    pthread_mutex_unlock( & picklock );
-    pthread_cond_signal( & check_again ) ; // do i need it here?
-
-    return ret;
-
-  }
-
-  void schedulePoint(list<Point3D> & add_to_schedule, const Point3D & pnt, int ffrad) {
-
-    if ( ! ffrad )
+    if (interactive)
       return;
 
-    Point3D pntt;
-    #define scheduleMe( shift1, shift2, shift3 ) \
-      pntt = pnt + Point3D(shift1, shift2, shift3); \
-      if ( pntt.inVolume(g.wvol.shape() ) && \
-         ! ( g.wvol(pntt) & SCHEDULED ) ) { \
-      add_to_schedule.push_back(pntt); \
-      g.wvol(pntt) |= SCHEDULED; \
-    }
-
-    scheduleMe( 1, 0, 0);
-    scheduleMe(-1, 0, 0);
-    scheduleMe( 0, 1, 0);
-    scheduleMe( 0,-1, 0);
-    scheduleMe( 0, 0, 1);
-    scheduleMe( 0, 0,-1);
-
-    #undef scheduleMe
-
-    const vector<Point3D> & tomark = g.markPoints( spn(pnt, 1, 0, 0), spn(pnt,-1, 0, 0),
-                                                   spn(pnt, 0, 1, 0), spn(pnt, 0,-1, 0),
-                                                   spn(pnt, 0, 0, 1), spn(pnt, 0, 0,-1) );
-    vector<Point3D>::const_iterator it = tomark.begin();
-    while ( it != tomark.end() ) {
-      Point3D tpnt( (*it++) + pnt );
-      if ( tpnt.inVolume(g.ivol.shape()) )
-        g.wvol(tpnt) |= FILLED ;  // it works MUCH faster if done without thread locking. Has seen no difference
-    }
-
-    g.wvol(pnt) |= CHECKED;
+    check_proc(table);
+    check_save(table);
 
   }
 
-  void collect_common(const list<Point3D> & add_to_schedule, uint ptsinth=1) {
 
-    list<Point3D>::const_iterator itl = add_to_schedule.begin();
-    pthread_mutex_lock( & picklock );
-    while ( itl != add_to_schedule.end() )
-      schedule.push(*itl++);
-    thinwork--;
-    pthread_mutex_unlock( & picklock );
-    pthread_cond_signal( & check_again ) ;
+  void check_proc( poptmx::OptionTable & tab ) {
 
+    if ( radius < 0 )
+      throw_error(command, "Impossible parameter value : " + tab.desc(&radius) + "."
+      " Cannot be negative.");
+    if ( ! tab.count(&radiusM) )
+      radiusM = radius;
+    if ( tab.count(&minval) && ( minval < 0 || minval > 256 ) )
+      throw_error(command, "Impossible parameter value : " + tab.desc(&minval) + "."
+      " Must be in the range [0,256].");
+    if ( tab.count(&maxval) && ( maxval < 0 || maxval > 256 ) )
+      throw_error(command, "Impossible parameter value : " + tab.desc(&maxval) + "."
+      " Must be in the range [0,256].");
+
+    // point : required argument.
+    if ( ! tab.count(&start) )
+      throw_error(command, "Missing required argument: "+tab.desc(&start)+".");
+
+  }
+
+
+  void check_save( poptmx::OptionTable & tab ) {
+    if ( ! ( tab.count(& out_filled) +
+      tab.count(& out_inverted) +
+      tab.count(& out_mask) ) )
+      throw_error(command, "At least one of the two following arguments is required: "
+      +tab.desc(&out_mask)+ ", "
+      +tab.desc(&out_filled)+ ", "
+      +tab.desc(&out_inverted)+ ".");
+  }
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class RWdistributor {
+
+protected:
+
+  const vector<Path> & names;
+  const Shape3D sh;
+  uint64_t currentidx;
+  ProgressBar bar;
+
+  static pthread_mutex_t iolock;
+  static pthread_mutex_t proglock;
+
+  bool distribute( long int * idx ) {
+    pthread_mutex_lock( & iolock );
+    *idx = currentidx++;
+    pthread_mutex_unlock( & iolock );
+    return *idx < sh(0) ;
+  }
+
+  void updateProg() {
     pthread_mutex_lock( & proglock );
-    bar.update( bar.progress() + ptsinth );
-    //std::cerr << ptsinth << "\n";
-    pthread_mutex_unlock( & proglock );
-
-  }
-
-  void collect( const Point3D & pnt, int ffrad) {
-    list<Point3D> add_to_schedule;
-    schedulePoint(add_to_schedule, pnt, ffrad);
-    collect_common(add_to_schedule);
-  }
-
-
-  void collect( const vector<Point3D> & pnts, const vector<int> & ffrads) {
-    const size_t sz = pnts.size();
-    if ( ffrads.size() != sz ) // must never happen
-      throw_bug(__FUNCTION__);
-    list<Point3D> add_to_schedule;
-    for (int idx=0 ; idx < sz ; idx++)
-      schedulePoint(add_to_schedule, pnts[idx], ffrads[idx]);
-    collect_common(add_to_schedule, sz);
-  }
-
-
-  void finilizeProgressBar() {
     bar.update();
+    pthread_mutex_unlock( & proglock );
   }
 
+  RWdistributor(const vector<Path> & _names, bool forRead, bool verbose)
+    : names(_names)
+    , sh(volsh)
+    , currentidx(0)
+    , bar(verbose , string(forRead ? "read" : "writ" ) + "ing volume", sh(0))
+  {
+    if (names.size() != sh(0))
+      throw_error("RW distributor", "Number of files not matching array size.");
+  }
 
 
 };
 
-pthread_mutex_t ProcDistributor::picklock = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t ProcDistributor::check_again = PTHREAD_COND_INITIALIZER;
-pthread_mutex_t ProcDistributor::proglock = PTHREAD_MUTEX_INITIALIZER;
+
+pthread_mutex_t RWdistributor::iolock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t RWdistributor::proglock = PTHREAD_MUTEX_INITIALIZER;
 
 
 
 
+class ReadDistributor : public RWdistributor {
 
+private:
 
-void * in_proc_thread (void * _thread_args) {
-  ProcDistributor *  dist = (ProcDistributor*) _thread_args;
-  if (!dist)
-    throw_error("process thread", "Inappropriate thread function arguments.");
-  vector<Point3D> pnts;
-  while ( dist->distribute(pnts) && ! g.stopProcessing ) {
-    vector<int> pntsChk(pnts.size());
-    for (int idx=0 ; idx < pnts.size() ; idx++)
-      pntsChk[idx] = checkMe(pnts[idx]);
-    dist->collect(pnts, pntsChk);
+  static void * in_read_thread (void * _thread_args) {
+
+    ReadDistributor *  dist = (ReadDistributor*) _thread_args;
+    if (!dist)
+      throw_error("read thread", "Inappropriate thread function arguments.");
+
+    Shape2D imgsh = Shape2D(dist->sh(1) , dist->sh(2) ) ;
+    Map8U img(imgsh);
+
+    long int idx;
+    while ( dist->distribute(&idx) ) {
+      ReadImage(dist->names[idx], img, imgsh);
+      ivol ( idx, Range::all(), Range::all() ) = img;
+      dist->updateProg();
+    }
+
+    return 0;
+
   }
-  return 0;
-}
 
+public:
 
-void operate_wvol( void *(*start_routine) (void *) ) {
+  ReadDistributor(const vector<Path> & _names, bool verbose = false)
+    : RWdistributor(_names, true, verbose)
+  {}
 
-  //g.wvol = 0; // can be time consuming especially if mmaped.
-  // instead I do it in multithreading:
-
-  vector<pthread_t> threads(g.run_threads);
-
-  for (int ith = 0 ; ith < g.run_threads ; ith++)
-    if ( pthread_create( & threads[ith], NULL, start_routine, (void*)(ith) ) ) // dirty hack with (void*)
-      throw_error("Zeroing volume", "Can't create thread.");
-  for (int ith = 0 ; ith < threads.size() ; ith++)
-    pthread_join( threads[ith], 0);
-
-}
-
-
-void apply_mask(bool invert) {
-
-  vector<pthread_t> threads(g.run_threads);
-  vector<ApplyArgs> args(g.run_threads);
-
-  for (int ith = 0 ; ith < g.run_threads ; ith++) {
-    args[ith].invert = invert;
-    args[ith].threadnum = ith;
-    if ( pthread_create( & threads[ith], NULL, in_apply_thread, &(args[ith]) ) ) // dirty hack with (void*)
-      throw_error("Apply mask", "Can't create thread.");
+  static void read(const vector<Path> & _names, bool verbose = false) {
+    vector<pthread_t> threads(run_threads);
+    ReadDistributor rwdist(_names, verbose);
+    for (int ith = 0 ; ith < run_threads ; ith++)
+      if ( pthread_create( & threads[ith], NULL, ReadDistributor::in_read_thread, &rwdist ) )
+        throw_error("Read volume", "Can't create thread.");
+    for (int ith = 0 ; ith < run_threads ; ith++)
+      pthread_join( threads[ith], 0);
   }
-  for (int ith = 0 ; ith < threads.size() ; ith++)
-    pthread_join( threads[ith], 0);
 
-}
+};
 
 
-void prepare_shift_volumes() {
+class WriteDistributor : public RWdistributor {
 
-  const int maxrad = max(g.radius, g.radiusM);
-  const int radius2 = g.radius * g.radius;
-  const int radiusM2 = g.radiusM * g.radiusM;
+private:
 
-  g.newPoints = vector<Point3D>();
-  g.markPoints = vector<Point3D>();
+  const Path out_filled;       ///< The mask for the output file names.
+  const Path out_inverted;
+  const Path out_mask;
+  uint8_t color;
 
-  for ( int x = -maxrad ; x <= maxrad ; x++ )
-    for ( int y = -maxrad ; y <= maxrad ; y++ )
-      for ( int z = -maxrad ; z <= maxrad ; z++ ) {
+  static void * in_write_thread (void * _thread_args) {
 
-        const Point3D pnt(z,y,x);
+    WriteDistributor *  dist = (WriteDistributor*) _thread_args;
+    if (!dist)
+      throw_error("write thread", "Inappropriate thread function arguments.");
 
-        if ( pnt.r2() <= radius2 )
+    Shape2D imgsh = Shape2D(dist->sh(1) , dist->sh(2) ) ;
+    Map8U img(imgsh);
+    Path outPath;
 
-          for ( long _P00 = 0 ; _P00 <= 1 ; _P00++)
-            if ( ! _P00  || ( pnt - Point3D( 1, 0, 0) ).r2() > radius2 )
-              for ( long _M00 = 0 ; _M00 <= 1 ; _M00++)
-                if ( ! _M00  || ( pnt - Point3D(-1, 0, 0) ).r2() > radius2 )
-                  for ( long _0P0 = 0 ; _0P0 <= 1 ; _0P0++)
-                    if ( ! _0P0  || ( pnt - Point3D( 0, 1, 0) ).r2() > radius2 )
-                      for ( long _0M0 = 0 ; _0M0 <= 1 ; _0M0++)
-                        if ( ! _0M0  || ( pnt - Point3D( 0,-1, 0) ).r2() > radius2 )
-                          for ( long _00P = 0 ; _00P <= 1 ; _00P++)
-                            if ( ! _00P  || ( pnt - Point3D( 0, 0, 1) ).r2() > radius2 )
-                              for ( long _00M = 0 ; _00M <= 1 ; _00M++)
-                                if ( ! _00M  || ( pnt - Point3D( 0, 0,-1) ).r2() > radius2 )
-                                  g.newPoints( _P00, _M00, _0P0, _0M0, _00P, _00M ).push_back(pnt);
+    long int idx;
+    while ( dist->distribute(&idx) ) {
 
-        if ( pnt.r2() <= radiusM2 )
+      const Map8U wmg = wvol (idx, Range::all(), Range::all());
 
-          for ( long _P00 = 0 ; _P00 <= 1 ; _P00++)
-            if ( ! _P00  || ( pnt - Point3D( 1, 0, 0) ).r2() > radiusM2 )
-              for ( long _M00 = 0 ; _M00 <= 1 ; _M00++)
-                if ( ! _M00  || ( pnt - Point3D(-1, 0, 0) ).r2() > radiusM2 )
-                  for ( long _0P0 = 0 ; _0P0 <= 1 ; _0P0++)
-                    if ( ! _0P0  || ( pnt - Point3D( 0, 1, 0) ).r2() > radiusM2 )
-                      for ( long _0M0 = 0 ; _0M0 <= 1 ; _0M0++)
-                        if ( ! _0M0  || ( pnt - Point3D( 0,-1, 0) ).r2() > radiusM2 )
-                          for ( long _00P = 0 ; _00P <= 1 ; _00P++)
-                            if ( ! _00P  || ( pnt - Point3D( 0, 0, 1) ).r2() > radiusM2 )
-                              for ( long _00M = 0 ; _00M <= 1 ; _00M++)
-                                if ( ! _00M  || ( pnt - Point3D( 0, 0,-1) ).r2() > radiusM2 )
-                                  g.markPoints( _P00, _M00, _0P0, _0M0, _00P, _00M ).push_back(pnt);
-
+      if ( ! dist->out_filled.empty() ) {
+        for ( long int sh0 = 0 ; sh0 < imgsh(0) ; sh0++)
+          for ( long int sh1 = 0 ; sh1 < imgsh(1) ; sh1++)
+            img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? ivol( idx, sh0, sh1 ) : dist->color ;
+        outPath = dist->out_filled + dist->names[idx].name();
+        SaveImage(outPath, img);
       }
 
+      if ( ! dist->out_inverted.empty() ) {
+        for ( long int sh0 = 0 ; sh0 < imgsh(0) ; sh0++)
+          for ( long int sh1 = 0 ; sh1 < imgsh(1) ; sh1++)
+            img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? dist->color : ivol( idx, sh0, sh1 ) ;
+        outPath = dist->out_inverted + dist->names[idx].name();
+        SaveImage(outPath, img);
+      }
 
-}
+      if ( ! dist->out_mask.empty() ) {
+        outPath = dist->out_mask + dist->names[idx].name();
+        SaveImage(outPath, wmg);
+      }
 
+      dist->updateProg();
 
+    }
 
-void read_input() {
-  vector<pthread_t> threads(g.run_threads);
-  ReadWriteDistributor rwdist;
-  rwdist.PrepareForRead();
-  for (int ith = 0 ; ith < g.run_threads ; ith++)
-    if ( pthread_create( & threads[ith], NULL, in_read_thread, &rwdist ) )
-      throw_error("Read volume", "Can't create thread.");
-  for (int ith = 0 ; ith < g.run_threads ; ith++)
-    pthread_join( threads[ith], 0);
+    return 0;
 
-}
-
-
-void save_results() {
-  vector<pthread_t> threads(g.run_threads);
-  ReadWriteDistributor rwdist;
-  rwdist.PrepareForWrite();
-  for (int ith = 0 ; ith < g.run_threads ; ith++)
-    if ( pthread_create( & threads[ith], NULL, in_write_thread, &rwdist ) )
-      throw_error("Write volume", "Can't create thread.");
-  for (int ith = 0 ; ith < g.run_threads ; ith++)
-    pthread_join( threads[ith], 0);
-}
-
-
-ProcDistributor procdist;
-vector<pthread_t> proc_threads;
-
-
-void start_process() {
-
-  if (proc_threads.size())
-    throw_error("Process data", "Another process is already running.");
-  proc_threads.resize(g.run_threads);
-
-  g.cross_point = g.start.front();
-
-  for ( int cpnt=0 ; cpnt < g.start.size() ; cpnt++ )
-    if ( ! g.start[cpnt].inVolume( g.ivol.shape() ) )
-      throw_error("Process data", "At least one starting point is outside the volume.");
-
-  for ( int cpnt=0 ; cpnt < g.stop.size() ; cpnt++ ) {
-    int rs2 = g.stop[cpnt].radius * g.stop[cpnt].radius;
-    for ( int x = - g.stop[cpnt].radius ; x <= g.stop[cpnt].radius ; x++ )
-      for ( int y = - g.stop[cpnt].radius ; y <= g.stop[cpnt].radius ; y++ )
-        for ( int z = -g.stop[cpnt].radius ; z <= g.stop[cpnt].radius ; z++ ) {
-          const Point3D pnt = Point3D(z,y,x) + g.stop[cpnt].center;
-          if ( Point3D(z,y,x).r2() <= rs2  &&  pnt.inVolume(g.ivol.shape()) )
-            g.wvol(pnt) |= ISBAD | SCHEDULED;
-        }
   }
 
-  // process
-  procdist = ProcDistributor();
-  for (int ith = 0 ; ith < g.run_threads ; ith++)
-    if ( pthread_create( & proc_threads[ith], NULL, in_proc_thread, &procdist ) )
-      throw_error("Process data", "Can't create thread.");
 
+
+public:
+
+  WriteDistributor(const vector<Path> & _names, bool verbose = false, uint8_t _color=0,
+                   Path _out_filled=Path(), Path _out_inverted=Path(), Path _out_mask=Path() )
+    : RWdistributor(_names, false, verbose)
+    , out_filled(_out_filled)
+    , out_inverted(_out_inverted)
+    , out_mask(_out_mask)
+    , color(_color)
+  {
+    if ( out_filled.empty() && out_inverted.empty() && out_mask.empty() )
+      throw_error("RW distributor", "Nothing to output.");
+  }
+
+  static void save(const vector<Path> & _names, bool verbose = false, uint8_t _color=0,
+                   Path _out_filled=Path(), Path _out_inverted=Path(), Path _out_mask=Path())
+  {
+    vector<pthread_t> threads(run_threads);
+    WriteDistributor rwdist(_names, verbose, _color,
+                                _out_filled, _out_inverted, _out_mask);
+    for (int ith = 0 ; ith < run_threads ; ith++)
+      if ( pthread_create( & threads[ith], NULL, WriteDistributor::in_write_thread, &rwdist ) )
+        throw_error("Write volume", "Can't create thread.");
+    for (int ith = 0 ; ith < run_threads ; ith++)
+      pthread_join( threads[ith], 0);
+  }
+
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class ThreadDistributor {
+
+private :
+
+  static pthread_mutex_t lock;
+  long int currentidx;
+  vector<pthread_t> threads;
+
+  void * arg;
+  bool (*sub_routine0)  ();
+  bool (*sub_routine1) (long int);
+  bool (*sub_routine2) (void *, long int);
+  bool sub_routine (long int idx) {
+    if (sub_routine0)
+      return sub_routine0();
+    if (sub_routine1)
+      return sub_routine1(idx);
+    if (sub_routine2)
+      return sub_routine2(arg, idx);
+    return false;
+  }
+
+
+  ThreadDistributor( bool (*_sub_routine)() )
+    : currentidx(0)
+    , arg(0)
+    , sub_routine0(_sub_routine)
+    , sub_routine1(0)
+    , sub_routine2(0)
+  {}
+
+
+  ThreadDistributor( bool (*_sub_routine)(long int) )
+    : currentidx(0)
+    , arg(0)
+    , sub_routine0(0)
+    , sub_routine1(_sub_routine)
+    , sub_routine2(0)
+  {}
+
+
+  ThreadDistributor( bool (*_sub_routine) (void *, long int), void * _arg )
+    : currentidx(0)
+    , arg(_arg)
+    , sub_routine0(0)
+    , sub_routine1(0)
+    , sub_routine2(_sub_routine)
+  {}
+
+
+  long int distribute() {
+    long int idx;
+    pthread_mutex_lock( & lock );
+    idx = currentidx++;
+    pthread_mutex_unlock( & lock );
+    return idx;
+  }
+
+
+  static void * in_thread (void * vdist) {
+    ThreadDistributor * dist = (ThreadDistributor*) vdist;
+    while ( dist->sub_routine(dist->distribute()) ) {}
+    return 0;
+  }
+
+
+  void start() {
+    pthread_t thread;
+    for (int ith = 0 ; ith < run_threads; ith++)
+      if ( pthread_create( & thread, NULL, in_thread, this ) )
+        warn("Thread operation", "Can't create thread.");
+      else
+        threads.push_back(thread);
+  }
+
+  void finish() {
+    for (int ith = 0 ; ith < threads.size() ; ith++)
+      pthread_join( threads[ith], 0);
+  }
+
+public:
+
+  static void execute( bool (*_thread_routine) (void *, long int), void * _arg ) {
+    ThreadDistributor dist(_thread_routine, _arg);
+    dist.start();
+    dist.finish();
+  }
+
+  static void execute( bool (*_thread_routine) (long int)) {
+    ThreadDistributor dist(_thread_routine);
+    dist.start();
+    dist.finish();
+  }
+
+  static void execute( bool (*_thread_routine)()) {
+    ThreadDistributor dist(_thread_routine);
+    dist.start();
+    dist.finish();
+  }
+
+};
+
+pthread_mutex_t ThreadDistributor::lock = PTHREAD_MUTEX_INITIALIZER;
+
+
+
+
+struct InitArgs {
+  Volume8U & vol;
+  uint crop;
+  static const uint8_t bounds = CHECKED | ISGOOD | SCHEDULED;
+  const long bg0;
+  const long bg1;
+  const long bg2;
+  // const Range bgn;
+  // const Range bg1;
+  // const Range bg2;
+  InitArgs(Volume8U & _vol, uint _crop)
+    : vol(_vol)
+    , crop(_crop)
+    , bg0(vol.extent(0) - crop)
+    , bg1(vol.extent(1) - crop)
+    , bg2(vol.extent(2) - crop)
+  {}
+};
+
+bool inThread_initXvol (void * _thread_args, long int idx) {
+
+  // variant with range objects causes segfaults in here
+  // have to use macro instead
+  #define forSubVol( m1, M1, m2, M2 ) \
+    for (int idx1 = m1 ; idx1 < M1 ; idx1++ ) \
+      for (int idx2 = m2 ; idx2 < M2 ; idx2++ ) \
+        args->vol(Point3D(idx, idx1, idx2)) = InitArgs::bounds;
+
+  const InitArgs* args = (InitArgs*) _thread_args;
+  if (idx >= args->vol.extent(0) )
+    return false;
+  if ( idx < args->crop  ||  idx >= args->vol.extent(0) - args->crop ) {
+    //args->vol(idx, Range::all()   , Range::all()   ) = InitArgs::bounds;
+    forSubVol(0, args->vol.extent(1), 0, args->vol.extent(2));
+  } else {
+    //args->vol(idx, args->bgn, args->bgn) = InitArgs::bounds;
+    forSubVol(0, args->crop, 0, args->crop);
+    //args->vol(idx, args->bg1, args->bgn) = InitArgs::bounds;
+    forSubVol(args->bg1, args->vol.extent(1), 0, args->crop);
+    //args->vol(idx, args->bgn, args->bg2) = InitArgs::bounds;
+    forSubVol(0, args->crop, args->bg2, args->vol.extent(2));
+    //args->vol(idx, args->bg1, args->bg2) = InitArgs::bounds;
+    forSubVol(args->bg1, args->vol.extent(1), args->bg2, args->vol.extent(2));
+  }
+
+  #undef forSubVol
+  return true;
 }
 
-void update_process() {
-  if ( proc_threads.empty() )
-    throw_error("Process data", "No process are running to finish.");
-  printf( "%s", procdist.bar.print_line().c_str() );
+
+bool inThread_zerowvol (long int idx) {
+  if ( idx >= volsh(0) )
+    return false;
+  wvol(idx, Range::all(), Range::all()) = 0;
+  return true;
 }
 
-void finish_process() {
-  if ( proc_threads.empty() )
-    throw_error("Process data", "No process are running to finish.");
-  for (int ith = 0 ; ith < proc_threads.size() ; ith++)
-    pthread_join( proc_threads[ith], 0);
-  procdist.finilizeProgressBar();
-  proc_threads.clear();
-}
 
-void process() {
-  start_process();
-  finish_process();
+bool inThread_wipewvol (long int idx) {
+  if ( idx >= volsh(0) )
+    return false;
+  wvol(idx, Range::all(), Range::all()) &= ( ~ISBAD ) & ( ~ISGOOD );
+  return true;
 }
 
 
 
+struct ApplyArgs {
+  bool invert;
+  uint color;
+};
 
+bool inThread_apply(void * _thread_args, long int idx) {
+  if ( idx >= volsh(0))
+    return false;
+  ApplyArgs *  args = (ApplyArgs*) _thread_args;
+  if (!args)
+    throw_error("apply mask thread", "Inappropriate thread function arguments.");
+  for ( long int sh1 = 0 ; sh1 < volsh(1) ; sh1++)
+    for ( long int sh2 = 0 ; sh2 < volsh(2) ; sh2++)
+      if ( ( ! args->invert  &&  ( ! ( wvol(idx, sh1, sh2) & FILLED ) ) )  ||
+           (   args->invert  &&  (     wvol(idx, sh1, sh2) & FILLED   ) )  )
+        ivol(idx, sh1, sh2) = args->color;
+  return true;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void saveSlice(const Point3D & cross, bool original=false, const string & prefix = string()) {
+
+  if ( ! cross.inVolume(volsh) )
+    throw_error("slice", "Point outside volume.");
+  const Volume8U & voltosave = original ? ivol : wvol;
+
+  Map8U yz = voltosave( Range::all(), Range::all(), cross.x() ).copy();
+  SaveImage(prefix + ".yz.tif", yz);
+  Map8U xz = voltosave( Range::all(), cross.y(), Range::all() ).copy();
+  SaveImage(prefix + ".xz.tif", xz);
+  Map8U xy = voltosave( cross.z(), Range::all(), Range::all() ).copy();
+  SaveImage(prefix + ".xy.tif", xy);
+
+}
 
 
 #include <signal.h>
+
+void sig2handler(int signum) {
+
+  Point3D pnt;
+  char line[256];
+
+  FILE *funcf = fopen( ".sliceme.txt", "r" );
+
+  if ( ! funcf ||
+       1 != fscanf ( funcf,  "%254[^\n]\n", line) ||
+       1 != _conversion (&pnt, line) ||
+       ! pnt.inVolume(volsh))
+    pnt = Point3D(volsh(2)/2, volsh(1)/2, volsh(0)/2);
+
+  if (funcf)
+    fclose(funcf);
+
+  saveSlice(pnt);
+
+  printf("Written slices through (%i, %i, %i) point."
+         " Files are named \".xy.tif\", \".xz.tif\" and \".yz.tif\".\n",
+         pnt.x(), pnt.y(), pnt.z() );
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 int main(int argc, char *argv[]) {
 
   clargs args(argc, argv);
 
-  struct sigaction act1;
-  act1.sa_handler = sig1handler;
-  sigaction(SIGUSR1, &act1, NULL);
-
   struct sigaction act2;
   act2.sa_handler = sig2handler;
   sigaction(SIGUSR2, &act2, NULL);
 
-  if (g.beverbose)
-    printf("My PID is %i. You can send me USR1 signal to stop filling and output whatever"
-           " has been done so far; or USR2 to save current"
+  if (args.beverbose)
+    printf("My PID is %i. You can send me USR2 signal to save current"
            " mask slices through the first start point.\n", getpid() );
 
-  const Shape2D imgsh = ImageSizes(g.inlist[0]);
-  const int nx=imgsh(1), ny=imgsh(0), nz=g.inlist.size();
-  const Shape3D vshape(nz, ny, nx);
+  const Shape2D imgsh = ImageSizes(args.inlist[0]);
 
-  prepare_shift_volumes();
+  const uint mrad = max(args.radius, args.radiusM);
+  volsh=Shape3D(args.inlist.size(), imgsh(0), imgsh(1));
+  Volume8U xivol( Shape3D(volsh(0)+2*mrad, volsh(1)+2*mrad, volsh(2)+2*mrad) );
+  Volume8U xwvol( Shape3D(volsh(0)+2*mrad, volsh(1)+2*mrad, volsh(2)+2*mrad) );
+  ivol.reference(xivol(Range(mrad, mrad+volsh(0)-1), Range(mrad, mrad+volsh(1)-1), Range(mrad, mrad+volsh(2)-1)));
+  wvol.reference(xwvol(Range(mrad, mrad+volsh(0)-1), Range(mrad, mrad+volsh(1)-1), Range(mrad, mrad+volsh(2)-1)));
 
-  const int imapfile = allocateBigVolume( vshape, g.ivol);
-  const int wmapfile = allocateBigVolume( vshape, g.wvol);
+  InitArgs initArgs(xwvol, mrad);
+  ThreadDistributor::execute(inThread_initXvol, &initArgs);
+  ThreadDistributor::execute(inThread_zerowvol);
+  ReadDistributor::read(args.inlist, args.beverbose);
 
+  if ( args.interactive ) {
 
-  read_input();
-
-  operate_wvol( in_zeroing_thread );
-
-
-
-  if ( g.interactive ) {
-
-    const bool beverbose = g.beverbose;
     char* flns;
     char** aargv;
     int aargc;
-    std::string sflns;
+    string sflns;
+    ProcDistributor * dist = 0;
 
     while ( (flns = readline("enter a command > ")) ) {
 
@@ -557,131 +735,105 @@ int main(int argc, char *argv[]) {
         sflns = " ";
       }
 
-      std::string lns;
-      std::istringstream tokenStream(sflns);
+      string lns;
+      istringstream tokenStream(sflns);
 
-      while (std::getline(tokenStream, lns, ';')) {
+      while (getline(tokenStream, lns, ';')) {
 
         try {
 
+
           if ( string_to_argv(lns.c_str(), &aargc, &aargv )  || ! aargc ) {
 
-            if ( ! proc_threads.size() )
-              printf("  No process is running.\n");
+            if (dist)
+              dist->update_process();
             else
-              update_process();
+              printf("  No process is running.\n");
 
             printf ( "  Possible commands are: start, stop, apply, save, slice.\n" );
 
+
           } else if ( string(aargv[0]) == "save" ) {
 
-            if ( proc_threads.size() )
-              throw_error("save", "A process is already running. Stop it first.");
+            if (dist)
+              throw_error("save", "A process is running. Stop it first.");
 
             poptmx::OptionTable table = args.save_table;
             table.parse(aargc, aargv);
-            clargs::check_save(table);
-            save_results();
+            args.check_save(table);
+
+            WriteDistributor::save(args.inlist, args.beverbose, args.color,
+                                   args.out_filled, args.out_inverted, args.out_mask);
+
 
           } else if ( string(aargv[0]) == "apply" ) {
 
-            if ( proc_threads.size() )
-              throw_error("apply", "A process is already running. Stop it first.");
+            if (dist)
+              throw_error("apply", "A process is running. Stop it first.");
 
-            g.color=0;
+            args.color=0;
             bool invert(false);
             poptmx::OptionTable table = args.color_table;
             table.add(poptmx::OPTION, &invert, 'i', "invert", "Inverts mask", "");
             table.parse(aargc, aargv);
 
-            apply_mask(invert);
+            ApplyArgs apply = {invert, args.color};
+            ThreadDistributor::execute(inThread_apply, &apply);
 
 
           } else if ( string(aargv[0]) == "reset" ) {
 
-            if ( proc_threads.size() )
-              throw_error("reset", "A process is already running. Stop it first.");
+            if (dist)
+              throw_error("save", "A process is running. Stop it first.");
+            ThreadDistributor::execute(inThread_zerowvol);
 
-            operate_wvol( in_zeroing_thread );
 
           } else if ( string(aargv[0]) == "start" ) {
 
-            if ( proc_threads.size() )
-              throw_error("start", "A process is already running. Stop it first.");
+            if (dist)
+              throw_error("save", "A process is already running. Stop it first.");
 
-            g.radius = 0;
-            g.radiusM = 0;
-            g.color = 0;
-            g.minval = -1;
-            g.maxval = -1;
-            g.minggrad = -1;
-            g.maxggrad = -1;
-            g.stopProcessing = false;
-            g.start.clear();
-            g.stop.clear();
+            args.radius = 0;
+            args.radiusM = 0;
+            args.color = 0;
+            args.minval = -1;
+            args.maxval = -1;
+            args.start.clear();
+            args.stop.clear();
 
             poptmx::OptionTable table = args.proc_table;
             table.parse(aargc, aargv);
-            clargs::check_proc(table);
+            args.check_proc(table);
 
-            operate_wvol( in_wiping_thread );
-            prepare_shift_volumes();
-
-            g.beverbose = false;
-
-            start_process();
+            ThreadDistributor::execute(inThread_wipewvol);
+            dist = new ProcDistributor(ivol, wvol, args.start, args.stop,
+                                       args.radius, args.radiusM, args.minval, args.maxval,
+                                       run_threads, args.beverbose);
+            dist->start_process();
 
           } else if ( string(aargv[0]) == "stop" ) {
 
-            g.beverbose = beverbose;
-            g.stopProcessing = true;
-            finish_process();
+            if (!dist)
+              throw_error("stop", "No process running.");
 
-          } else if ( string(aargv[0]) == "wait" ) {
-
-            g.beverbose = beverbose;
-            printf("Waiting ... ");
-            finish_process();
-            printf("Done");
+            dist->stopProcessing=true;
+            dist->finish_process();
 
           } else if ( string(aargv[0]) == "slice" ) {
 
             Point3D cross;
-            bool sgrad=false;
             bool original=false;
+            string prefix;
             poptmx::OptionTable table;
             table
               .add(poptmx::ARGUMENT, &cross, "point", "slices through this point", "")
               .add(poptmx::OPTION, &original, 'o', "original",
                   "Save slices through the data volume, not mask.", "")
-              .add(poptmx::ARGUMENT, &sgrad, "gradient", "Saves gradient of the original volume", "");
-
+              .add(poptmx::OPTION, &original, 'p', "prefix",
+                  "Prefix of output files.", "");
             table.parse(aargc, aargv);
 
-            if ( ! cross.inVolume(vshape) )
-              cross = g.cross_point;
-
-            Map8U yz( g.ivol.shape()(0), g.ivol.shape()(1) );
-            Map8U xz( g.ivol.shape()(0), g.ivol.shape()(2) );
-            Map8U xy( g.ivol.shape()(1), g.ivol.shape()(2) );
-
-            if (sgrad) {
-
-
-
-
-            } else {
-
-              const Volume8U & voltosave = original ? g.ivol : g.wvol;
-              yz = voltosave( Range::all(), Range::all(), cross.x() ).copy();
-              SaveImage(".yz.tif", yz);
-              xz = voltosave( Range::all(), cross.y(), Range::all() ).copy();
-              SaveImage(".xz.tif", xz);
-              xy = voltosave( cross.z(), Range::all(), Range::all() ).copy();
-              SaveImage(".xy.tif", xy);
-
-            }
-
+            saveSlice(cross, original, prefix);
 
           } else {
 
@@ -703,15 +855,13 @@ int main(int argc, char *argv[]) {
 
   } else {
 
-    prepare_shift_volumes();
-    process();
-    save_results();
+    ProcDistributor(ivol, wvol, args.start, args.stop,
+                    args.radius, args.radiusM, args.minval, args.maxval,
+                    run_threads, args.beverbose)
+      .process();
+    WriteDistributor::save(args.inlist, args.beverbose, args.color,
+                           args.out_filled, args.out_inverted, args.out_mask);
 
   }
-
-  if (imapfile)
-    close(imapfile);
-  if (wmapfile)
-    close(wmapfile);
 
 }

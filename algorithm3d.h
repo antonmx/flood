@@ -6,6 +6,107 @@
 #include <queue>
 
 
+template<class T> class Fqueue {
+
+private:
+
+  struct Fitem {
+    T val;
+    Fitem * next;
+    Fitem(T _val, Fitem * _next) : val(_val), next(_next) {}
+  };
+
+  size_t sz;
+  Fitem * first;
+  Fitem * last;
+
+  Fqueue(size_t _sz, Fitem * _first, Fitem * _last)
+   : sz(_sz)
+   , first(_first)
+   , last(_last)
+  { 
+    if (sz)
+      last->next=0;
+  }
+
+public:
+
+  Fqueue()
+   : Fqueue(0, 0, 0)
+  {}
+
+  ~Fqueue() {
+    while(sz--) {
+      Fitem * del = first;
+      first = del->next;
+      delete del;
+    }
+  }
+
+  const size_t & size() const { return sz; }
+
+  Fqueue & push(const T& el) {
+    Fitem * ni = new Fitem(el, 0);
+    if (sz)
+      last->next = ni;
+    last = ni;
+    if (!sz)
+      first = last;
+    sz++;
+    return * this;
+  }
+
+  Fqueue & push(Fqueue & addMe) {
+    if ( ! addMe.sz )
+      return * this;
+    if(sz)
+      last->next = addMe.first;
+    last = addMe.last;
+    if (!sz)
+      first = addMe.first;
+    sz += addMe.sz;
+    addMe = Fqueue();
+    return * this;
+  }
+
+  T pop() {
+    if (!sz)
+      return T();
+    Fitem * del = first;
+    T ret = del->val;
+    first = del->next;
+    last->next = first;
+    delete del;
+    sz--;
+    return ret;
+  }  
+
+  Fqueue & pop(const size_t nit) {
+
+    if ( ! nit  ||  ! sz )
+      return *this;
+    if (nit>=sz) {
+      Fqueue * nq =new Fqueue(sz, first, last);
+      *this = Fqueue();
+      return *nq;
+    }
+
+    Fitem * cur = first;
+    for (int idx=1 ; idx<nit ; idx++)
+      cur = cur->next;
+    last->next = cur->next; 
+    Fqueue * nq = new Fqueue(nit, first, cur);
+    first = last->next;
+    last->next = 0;
+    sz -= nit;
+    return *nq;
+  
+  }
+    
+};
+
+
+
 class ProcDistributor {
 
 private:
@@ -14,9 +115,9 @@ private:
   Volume8U & wvol;
   const Shape3D volsh;
 
-  std::queue<Point3D, std::deque<Point3D> > schedule;
+  Fqueue<Point3D> schedule;
   int thinwork;
-  const int run_threads;
+  ulong run_threads;
 
   const int radius;
   const int radiusM;
@@ -36,8 +137,8 @@ private:
   int checkMe(const Point3D & pnt, const blitz::TinyVector<long int, 6> & spnv);
 
   static void * in_proc_thread (void * _thread_args);
-  bool distribute( std::queue<Point3D> & pnts );
-  void collect( std::queue<Point3D> & pnts, std::queue< blitz::TinyVector<long int, 6> > & spns);
+  bool distribute( Fqueue<Point3D> & pnts );
+  void collect( Fqueue<Point3D> & pnts, Fqueue< blitz::TinyVector<long int, 6> > & spns);
 
 public:
 
@@ -48,7 +149,7 @@ public:
                   const std::vector< Point3D > & _schedule,
                   const std::vector<Sphere> & fence,
                   int _radius, int _radiusM, int _minval, int _maxval,
-                  int _run_threads, bool verbose);
+                  ulong _run_threads, bool verbose);
 
   void start_process();
   void update_process();

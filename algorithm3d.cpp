@@ -43,7 +43,7 @@ ProcDistributor::ProcDistributor(Volume8U & _ivol, Volume8U & _wvol,
                   const std::vector< Point3D > & _schedule,
                   const std::vector<Sphere> & fence,
                   int _radius, int _radiusM, int _minval, int _maxval,
-                  int _run_threads, bool verbose)
+                  ulong _run_threads, bool verbose)
   : ivol(_ivol)
   , wvol(_wvol)
   , volsh(_ivol.shape())
@@ -64,16 +64,19 @@ ProcDistributor::ProcDistributor(Volume8U & _ivol, Volume8U & _wvol,
   , tMon2(0)
   , bar( verbose , "processing volume", _ivol.size() )
 {
-
-
+  
+  proc_threads.reserve(run_threads);
+  
+  if (_schedule.empty())
+    throw_error("Process data", "No starting points.");
   vector<Point3D>::const_iterator it = _schedule.begin();
-  while ( it != _schedule.end() )
+  while ( it != _schedule.end() ) {
     if ( it->inVolume(volsh) )
-      schedule.push(*it++);
+      schedule.push(*it);
     else
       warn("Process data", "At least one starting point is outside the volume.");
-  if (schedule.empty())
-    throw_error("Process data", "No starting points.");
+    it++;
+  }
 
   for ( int cpnt=0 ; cpnt < fence.size() ; cpnt++ ) {
     int rs2 = fence[cpnt].radius * fence[cpnt].radius;
@@ -133,29 +136,25 @@ ProcDistributor::ProcDistributor(Volume8U & _ivol, Volume8U & _wvol,
 }
 
 
-bool ProcDistributor::distribute( queue<Point3D> & pnts ) {
+bool ProcDistributor::distribute( Fqueue<Point3D> & pnts ) {
 
   bool ret = true;
 
-  pthread_mutex_lock( & picklock );
-
-  while ( schedule.empty() && thinwork )
-    pthread_cond_wait(&check_again, &picklock);
-
   Time::time_point nowSt = Time::now();
+  pthread_mutex_lock( & picklock );
+  while ( thinwork && ! schedule.size() )
+    pthread_cond_wait(&check_again, &picklock);
+  tMon += Time::now() - nowSt;
+    
 
-  if ( schedule.empty() ) {
-    ret = false;
-  } else {
-    const int sz = std::max( schedule.size() / run_threads, ulong(1) );
-    for (int idx=0 ; idx < sz ; idx++) {
-      pnts.push(schedule.front());
-      schedule.pop();
-    }
+  const ulong sz = schedule.size();
+  if (sz) {
+    pnts = schedule.pop( std::max(sz/run_threads, ulong(1)) );
     thinwork++;
+  } else {
+    ret = false;
   }
 
-  tMon += Time::now() - nowSt;
   pthread_mutex_unlock( & picklock );
   pthread_cond_signal( & check_again ) ; // do i need it here?
 
@@ -164,17 +163,17 @@ bool ProcDistributor::distribute( queue<Point3D> & pnts ) {
 }
 
 
-void ProcDistributor::collect( queue<Point3D> & pnts, queue< TinyVector<long int, 6> > & spns) {
+void ProcDistributor::collect( Fqueue<Point3D> & pnts, Fqueue< TinyVector<long int, 6> > & spns) {
 
   const size_t sz = pnts.size();
-  queue<Point3D> add_to_schedule;
+  Fqueue<Point3D> add_to_schedule;
 
   //queue<Point3D>::const_iterator ptsit=pnts.begin();
   //queue< TinyVector<long int, 6> >::const_iterator spnsit=spns.begin();
   // while(ptsit != pnts.end()) {
-  while( ! pnts.empty() ) {
+  while( pnts.size() && spns.size() ) {
 
-    const Point3D & pnti = pnts.front();
+    const Point3D pnti = pnts.pop();
 
     for( array<Point3D,6>::const_iterator itcs = crossPoints.begin() ; itcs < crossPoints.end() ; itcs++ ) {
       const Point3D pntt = pnti + *itcs;
@@ -186,7 +185,7 @@ void ProcDistributor::collect( queue<Point3D> & pnts, queue< TinyVector<long int
     }
 
 
-    const vector<Point3D> & tomark = markPoints(spns.front());
+    const vector<Point3D> & tomark = markPoints(spns.pop());
     vector<Point3D>::const_iterator it = tomark.begin();
     while ( it != tomark.end() ) {
       Point3D tpnt( (*it++) + pnti );
@@ -195,19 +194,13 @@ void ProcDistributor::collect( queue<Point3D> & pnts, queue< TinyVector<long int
 
     wvol(pnti) |= CHECKED;
 
-    pnts.pop();
-    spns.pop();
-
   }
 
-  pthread_mutex_lock( & picklock );
   Time::time_point nowSt = Time::now();
-  while ( ! add_to_schedule.empty() ) {
-    schedule.push(add_to_schedule.front());
-    add_to_schedule.pop();
-  };
-  thinwork--;
+  pthread_mutex_lock( & picklock );
   tMon2 += Time::now() - nowSt;
+  schedule.push(add_to_schedule);
+  thinwork--;
   pthread_mutex_unlock( & picklock );
   pthread_cond_signal( & check_again ) ;
 
@@ -246,15 +239,17 @@ int ProcDistributor::checkMe(const Point3D & pnt, const blitz::TinyVector<long i
 
 
 void * ProcDistributor::in_proc_thread (void * _thread_args) {
+
   ProcDistributor *  dist = (ProcDistributor*) _thread_args;
   if (!dist)
     throw_error("process thread", "Inappropriate thread function arguments.");
-  queue<Point3D> pnts;
-  queue< TinyVector<long int, 6> > spns;
+  
+  Fqueue<Point3D> pnts;
   while ( dist->distribute(pnts) && ! ProcDistributor::stopProcessing ) {
-    queue<Point3D> cpnts;
-    while( ! pnts.empty() ) {
-      Point3D & pnt = pnts.front();
+    Fqueue<Point3D> cpnts;
+    Fqueue< blitz::TinyVector<long int, 6> > spns;
+    while( pnts.size() ) {
+      Point3D pnt = pnts.pop();
       #define spn(a1, a2, a3) ( dist->wvol(pnt + Point3D(a1, a2, a3) ) & CHECKED ?  1l  :  0l )
       const TinyVector<long int, 6> spnv( spn(1, 0, 0), spn(-1, 0, 0),
                                           spn(0, 1, 0), spn( 0,-1, 0),
@@ -264,12 +259,12 @@ void * ProcDistributor::in_proc_thread (void * _thread_args) {
         cpnts.push(pnt);
         spns.push(spnv);
       }
-      pnts.pop();
     }
     dist->collect(cpnts, spns);
   }
 
   return 0;
+
 }
 
 void ProcDistributor::start_process() {

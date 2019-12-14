@@ -31,7 +31,6 @@
 #include "tools.h"
 
 #include <unistd.h>
-#include <sys/mman.h>
 #include <vector>
 #include <tiffio.h>
 #include <fcntl.h>
@@ -54,23 +53,13 @@ using namespace blitz;
 
 
 
-static timespec nowTime() {
-  timespec nt;
-  clock_gettime(CLOCK_MONOTONIC, &nt);
-  return nt;
-}
-
-const timespec startTV = nowTime();
-timespec prevTV = startTV;
-
-inline double sec( const timespec & tm ) {
-  return tm.tv_sec + tm.tv_nsec / 1000000000.0;
-}
+const Time::time_point startTV = Time::now();
+Time::time_point prevTV = startTV;
 
 void prdn( int a ) {
-  const timespec nowTV = nowTime();
-  double start_elapsed = sec(nowTV) - sec(startTV);
-  double prev_elapsed  = sec(nowTV) - sec(prevTV);
+  const Time::time_point nowTV = Time::now();
+  double start_elapsed = chrono::nanoseconds(nowTV - startTV).count()/1000000000.0;
+  double prev_elapsed  = chrono::nanoseconds(nowTV - prevTV ).count()/1000000000.0;
   printf("DONE %i:  %f  %f\n", a, prev_elapsed, start_elapsed);
   fflush(stdout);
   prevTV=nowTV;
@@ -78,9 +67,9 @@ void prdn( int a ) {
 
 
 void prdn( const std::string & msg ) {
-  timespec nowTV = nowTime();
-  double start_elapsed = ( nowTV.tv_nsec - startTV.tv_nsec ) / 1000000000.0;
-  double prev_elapsed = ( nowTV.tv_nsec - prevTV.tv_nsec ) / 1000000000.0;
+  const Time::time_point nowTV = Time::now();
+  double start_elapsed = chrono::nanoseconds(nowTV - startTV).count()/1000000000.0;
+  double prev_elapsed  = chrono::nanoseconds(nowTV - prevTV ).count()/1000000000.0;
   printf("DONE \"%s\":  %f  %f\n", msg.c_str(), prev_elapsed, start_elapsed);
   fflush(stdout);
   prevTV=nowTV;
@@ -623,7 +612,7 @@ ProgressBar::ProgressBar(bool _showme, const string & _message, uint64_t _steps)
     "%" + toString(nums) + "u of " + toString(steps) + " [%s] %4s" :
     string( "progress: %u" );
 
-  progPrevTV = sec(nowTime());
+  progPrevTV = Time::now();
 
   if ( showme ) {;
     cout << "Starting process";
@@ -673,8 +662,8 @@ ProgressBar::update(uint64_t curstep){
 
   if ( !showme || !reservedChs ) return; // Uninitialized progress bar.
 
-  const double progNowTV = sec(nowTime());
-  if ( progNowTV - progPrevTV > 0.1 )
+  Time::time_point progNowTV = Time::now();
+  if ( progNowTV - progPrevTV > Time::duration(std::chrono::milliseconds(100)) )
     progPrevTV = progNowTV;
   else
     return;

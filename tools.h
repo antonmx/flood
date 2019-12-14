@@ -38,6 +38,7 @@
 #include <queue>
 #include <stdint.h>
 #include <vector>
+#include <chrono>
 
 #include "blitz-long/blitz/array.h"
 
@@ -52,9 +53,21 @@ const uint8_t SCHEDULED = 0b00100000;
 const uint8_t ISGOOD    = 0b00010000;
 const uint8_t ISBAD     = 0b00001000;
 
+typedef std::chrono::high_resolution_clock  Time;
+//typedef std::chrono::time_point<Time>  TimeP;
+//typedef std::chrono::duration<Time>  TimeD;
 
 
+/*
+inline double sec( const timespec & tm ) {
+  return tm.tv_sec + tm.tv_nsec / 1000000000.0;
+}
 
+inline const timespec operator+(const timespec & one, const timespec & two) {
+  return { one.tv_sec + two.tv_sec,  one.tv_nsec + two.tv_nsec};
+}
+
+*/
 
 
 void prdn( int a );
@@ -374,7 +387,7 @@ private:
   int reservedChs;    ///< Symbols for the constant part of the PB.
   std::string fmt;      ///< Format string used to print the numbers.
   int getwidth();   ///< Returns current terminal width.
-  double progPrevTV;   ///< time of the last update
+  Time::time_point progPrevTV;   ///< time of the last update
 
 public:
 

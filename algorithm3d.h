@@ -30,12 +30,14 @@ private:
   pthread_mutex_t picklock;
   pthread_cond_t check_again;
   std::vector<pthread_t> proc_threads;
+  Time::duration tMon;
+  Time::duration tMon2;
 
   int checkMe(const Point3D & pnt, const blitz::TinyVector<long int, 6> & spnv);
 
   static void * in_proc_thread (void * _thread_args);
-  bool distribute( std::list<Point3D> & pnts );
-  void collect( const std::list<Point3D> & pnts, const std::list< blitz::TinyVector<long int, 6> > & spns);
+  bool distribute( std::queue<Point3D> & pnts );
+  void collect( std::queue<Point3D> & pnts, std::queue< blitz::TinyVector<long int, 6> > & spns);
 
 public:
 

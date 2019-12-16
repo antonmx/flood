@@ -69,12 +69,8 @@ install(TARGETS flood LIBRARY DESTINATION lib)
 
 
 add_executable(flood3d flood3d.cpp)
-#add_executable(flood3d flood3d.cpp tools.h tools.cpp algorithm3d.h algorithm3d.cpp)
 target_link_libraries(flood3d
   flood
-  #${ImageMagick_LIBRARIES}
-  #tiff
-  #pthread
   poptmx
   readline
 )
@@ -82,14 +78,5 @@ add_dependencies(flood blitz-long)
 install(TARGETS flood3d RUNTIME DESTINATION bin)
 
 
-#add_executable(flood2d flood2d.cpp tools.cpp)
-#target_link_libraries(flood2d
-#  ${ImageMagick_LIBRARIES}
-#  tiff
-#  poptmx
-#  pthread
-#)
-#add_dependencies(flood2d blitz-long)
-#install(TARGETS flood2d RUNTIME DESTINATION bin)
 
 

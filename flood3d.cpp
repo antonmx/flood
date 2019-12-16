@@ -50,6 +50,23 @@ static Shape3D  volsh;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct clargs {
 
   Path command;               ///< Command name as it was invoked.
@@ -212,200 +229,6 @@ struct clargs {
 
 
 
-
-
-
-class RWdistributor {
-
-protected:
-
-  const vector<Path> & names;
-  const Shape3D sh;
-  uint64_t currentidx;
-  ProgressBar bar;
-
-  static pthread_mutex_t iolock;
-  static pthread_mutex_t proglock;
-
-  bool distribute( long int * idx ) {
-    pthread_mutex_lock( & iolock );
-    *idx = currentidx++;
-    pthread_mutex_unlock( & iolock );
-    return *idx < sh(0) ;
-  }
-
-  void updateProg() {
-    pthread_mutex_lock( & proglock );
-    bar.update();
-    pthread_mutex_unlock( & proglock );
-  }
-
-  RWdistributor(const vector<Path> & _names, bool forRead, bool verbose)
-    : names(_names)
-    , sh(volsh)
-    , currentidx(0)
-    , bar(verbose , string(forRead ? "read" : "writ" ) + "ing volume", sh(0))
-  {
-    if (names.size() != sh(0))
-      throw_error("RW distributor", "Number of files not matching array size.");
-  }
-
-
-};
-
-
-pthread_mutex_t RWdistributor::iolock = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t RWdistributor::proglock = PTHREAD_MUTEX_INITIALIZER;
-
-
-
-
-class ReadDistributor : public RWdistributor {
-
-private:
-
-  static void * in_read_thread (void * _thread_args) {
-
-    ReadDistributor *  dist = (ReadDistributor*) _thread_args;
-    if (!dist)
-      throw_error("read thread", "Inappropriate thread function arguments.");
-
-    Shape2D imgsh = Shape2D(dist->sh(1) , dist->sh(2) ) ;
-    Map8U img(imgsh);
-
-    long int idx;
-    while ( dist->distribute(&idx) ) {
-      ReadImage(dist->names[idx], img, imgsh);
-      ivol ( idx, Range::all(), Range::all() ) = img;
-      dist->updateProg();
-    }
-
-    return 0;
-
-  }
-
-public:
-
-  ReadDistributor(const vector<Path> & _names, bool verbose = false)
-    : RWdistributor(_names, true, verbose)
-  {}
-
-  static void read(const vector<Path> & _names, bool verbose = false) {
-    vector<pthread_t> threads(run_threads);
-    ReadDistributor rwdist(_names, verbose);
-    for (int ith = 0 ; ith < run_threads ; ith++)
-      if ( pthread_create( & threads[ith], NULL, ReadDistributor::in_read_thread, &rwdist ) )
-        throw_error("Read volume", "Can't create thread.");
-    for (int ith = 0 ; ith < run_threads ; ith++)
-      pthread_join( threads[ith], 0);
-  }
-
-};
-
-
-class WriteDistributor : public RWdistributor {
-
-private:
-
-  const Path out_filled;       ///< The mask for the output file names.
-  const Path out_inverted;
-  const Path out_mask;
-  uint8_t color;
-
-  static void * in_write_thread (void * _thread_args) {
-
-    WriteDistributor *  dist = (WriteDistributor*) _thread_args;
-    if (!dist)
-      throw_error("write thread", "Inappropriate thread function arguments.");
-
-    Shape2D imgsh = Shape2D(dist->sh(1) , dist->sh(2) ) ;
-    Map8U img(imgsh);
-    Path outPath;
-
-    long int idx;
-    while ( dist->distribute(&idx) ) {
-
-      const Map8U wmg = wvol (idx, Range::all(), Range::all());
-
-      if ( ! dist->out_filled.empty() ) {
-        for ( long int sh0 = 0 ; sh0 < imgsh(0) ; sh0++)
-          for ( long int sh1 = 0 ; sh1 < imgsh(1) ; sh1++)
-            img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? ivol( idx, sh0, sh1 ) : dist->color ;
-        outPath = dist->out_filled + dist->names[idx].name();
-        SaveImage(outPath, img);
-      }
-
-      if ( ! dist->out_inverted.empty() ) {
-        for ( long int sh0 = 0 ; sh0 < imgsh(0) ; sh0++)
-          for ( long int sh1 = 0 ; sh1 < imgsh(1) ; sh1++)
-            img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? dist->color : ivol( idx, sh0, sh1 ) ;
-        outPath = dist->out_inverted + dist->names[idx].name();
-        SaveImage(outPath, img);
-      }
-
-      if ( ! dist->out_mask.empty() ) {
-        outPath = dist->out_mask + dist->names[idx].name();
-        SaveImage(outPath, wmg);
-      }
-
-      dist->updateProg();
-
-    }
-
-    return 0;
-
-  }
-
-
-
-public:
-
-  WriteDistributor(const vector<Path> & _names, bool verbose = false, uint8_t _color=0,
-                   Path _out_filled=Path(), Path _out_inverted=Path(), Path _out_mask=Path() )
-    : RWdistributor(_names, false, verbose)
-    , out_filled(_out_filled)
-    , out_inverted(_out_inverted)
-    , out_mask(_out_mask)
-    , color(_color)
-  {
-    if ( out_filled.empty() && out_inverted.empty() && out_mask.empty() )
-      throw_error("RW distributor", "Nothing to output.");
-  }
-
-  static void save(const vector<Path> & _names, bool verbose = false, uint8_t _color=0,
-                   Path _out_filled=Path(), Path _out_inverted=Path(), Path _out_mask=Path())
-  {
-    vector<pthread_t> threads(run_threads);
-    WriteDistributor rwdist(_names, verbose, _color,
-                                _out_filled, _out_inverted, _out_mask);
-    for (int ith = 0 ; ith < run_threads ; ith++)
-      if ( pthread_create( & threads[ith], NULL, WriteDistributor::in_write_thread, &rwdist ) )
-        throw_error("Write volume", "Can't create thread.");
-    for (int ith = 0 ; ith < run_threads ; ith++)
-      pthread_join( threads[ith], 0);
-  }
-
-
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class ThreadDistributor {
 
 private :
@@ -419,40 +242,34 @@ private :
   bool (*sub_routine1) (long int);
   bool (*sub_routine2) (void *, long int);
   bool sub_routine (long int idx) {
-    if (sub_routine0)
-      return sub_routine0();
-    if (sub_routine1)
-      return sub_routine1(idx);
-    if (sub_routine2)
-      return sub_routine2(arg, idx);
+    if (sub_routine0) return sub_routine0();
+    if (sub_routine1) return sub_routine1(idx);
+    if (sub_routine2) return sub_routine2(arg, idx);
     return false;
   }
 
+  ThreadDistributor( bool (*_sub_routine0)(),
+                     bool (*_sub_routine1)(long int),
+                     bool (*_sub_routine2) (void *, long int),
+                     void * _arg)
+    : currentidx(0)
+    , arg(_arg)
+    , sub_routine0(_sub_routine0)
+    , sub_routine1(_sub_routine1)
+    , sub_routine2(_sub_routine2)
+  {}
 
   ThreadDistributor( bool (*_sub_routine)() )
-    : currentidx(0)
-    , arg(0)
-    , sub_routine0(_sub_routine)
-    , sub_routine1(0)
-    , sub_routine2(0)
+    : ThreadDistributor(_sub_routine, 0, 0, 0)
   {}
 
 
   ThreadDistributor( bool (*_sub_routine)(long int) )
-    : currentidx(0)
-    , arg(0)
-    , sub_routine0(0)
-    , sub_routine1(_sub_routine)
-    , sub_routine2(0)
+    : ThreadDistributor(0, _sub_routine, 0, 0)
   {}
 
-
   ThreadDistributor( bool (*_sub_routine) (void *, long int), void * _arg )
-    : currentidx(0)
-    , arg(_arg)
-    , sub_routine0(0)
-    , sub_routine1(0)
-    , sub_routine2(_sub_routine)
+    : ThreadDistributor(0, 0, _sub_routine, _arg)
   {}
 
 
@@ -474,7 +291,7 @@ private :
 
   void start() {
     pthread_t thread;
-    for (int ith = 0 ; ith < run_threads; ith++)
+    for (int ith = 0 ; ith < run_threads ; ith++)
       if ( pthread_create( & thread, NULL, in_thread, this ) )
         warn("Thread operation", "Can't create thread.");
       else
@@ -505,6 +322,7 @@ public:
     dist.start();
     dist.finish();
   }
+
 
 };
 
@@ -600,6 +418,108 @@ bool inThread_apply(void * _thread_args, long int idx) {
 }
 
 
+
+struct ReadVolArgs {
+
+  const vector<Path> & names;
+  const Shape2D imgsh;
+  ProgressBar bar;
+  pthread_mutex_t proglock;
+
+  ReadVolArgs(const vector<Path> & _names, bool verbose=false)
+    : names(_names)
+    , imgsh(volsh(1),volsh(2))
+    , bar(verbose , "reading volume", volsh(0))
+    , proglock(PTHREAD_MUTEX_INITIALIZER)
+  {
+    if (names.size() != volsh(0))
+      throw_error("Reading volume", "Number of files not matching array size.");
+  }
+
+};
+
+bool inThread_readVol (void * _thread_args, long int idx) {
+  ReadVolArgs *  dist = (ReadVolArgs*) _thread_args;
+  if (!dist)
+    throw_error("read thread", "Inappropriate thread function arguments.");
+  if ( idx >= dist->names.size())
+    return false;
+  Map8U img(dist->imgsh);
+  ReadImage(dist->names[idx], img, dist->imgsh);
+  ivol ( idx, Range::all(), Range::all() ) = img;
+  pthread_mutex_lock(&dist->proglock);
+  dist->bar.update();
+  pthread_mutex_unlock(&dist->proglock);
+  return true;
+}
+
+
+
+struct SaveVolArgs {
+
+  const vector<Path> & names;
+  const Shape2D imgsh;
+  const Path out_filled;
+  const Path out_inverted;
+  const Path out_mask;
+  const uint8_t color;
+  ProgressBar bar;
+  pthread_mutex_t proglock;
+
+  SaveVolArgs(const vector<Path> & _names, bool verbose=false, uint8_t _color=0,
+              const Path & _out_filled=Path(), const Path & _out_inverted=Path(), const Path & _out_mask=Path() )
+    : names(_names)
+    , imgsh(volsh(1),volsh(2))
+    , out_filled(_out_filled)
+    , out_inverted(_out_inverted)
+    , out_mask(_out_mask)
+    , color(_color)
+    , bar(verbose , "saving volume", volsh(0))
+    , proglock(PTHREAD_MUTEX_INITIALIZER)
+  {
+    if (names.size() != volsh(0))
+      throw_error("Saving volume", "Number of files not matching array size.");
+    if ( out_filled.empty() && out_inverted.empty() && out_mask.empty() )
+      throw_error("Saving volume", "Nothing to output.");
+  }
+
+};
+
+
+bool inThread_saveVol (void * _thread_args, long int idx) {
+
+  SaveVolArgs *  dist = (SaveVolArgs*) _thread_args;
+  if (!dist)
+    throw_error("read thread", "Inappropriate thread function arguments.");
+  if ( idx >= dist->names.size() )
+    return false;
+
+  const Map8U wmg = wvol (idx, Range::all(), Range::all());
+  Map8U img(dist->imgsh);
+
+  if ( ! dist->out_filled.empty() ) {
+    for ( long int sh0 = 0 ; sh0 < dist->imgsh(0) ; sh0++)
+      for ( long int sh1 = 0 ; sh1 < dist->imgsh(1) ; sh1++)
+        img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? ivol( idx, sh0, sh1 ) : dist->color ;
+    SaveImage(dist->out_filled + dist->names[idx].name(), img);
+  }
+  if ( ! dist->out_inverted.empty() ) {
+    for ( long int sh0 = 0 ; sh0 < dist->imgsh(0) ; sh0++)
+      for ( long int sh1 = 0 ; sh1 < dist->imgsh(1) ; sh1++)
+        img(sh0, sh1) =  ( wmg(sh0, sh1) & FILLED ) ? dist->color : ivol( idx, sh0, sh1 ) ;
+    SaveImage(dist->out_inverted + dist->names[idx].name(), img);
+  }
+  if ( ! dist->out_mask.empty() ) {
+    SaveImage(dist->out_mask + dist->names[idx].name(), wmg);
+  }
+
+  pthread_mutex_lock(&dist->proglock);
+  dist->bar.update();
+  pthread_mutex_unlock(&dist->proglock);
+
+  return true;
+
+}
 
 
 
@@ -716,7 +636,9 @@ int main(int argc, char *argv[]) {
   InitArgs initArgs(xwvol, mrad);
   ThreadDistributor::execute(inThread_initXvol, &initArgs);
   ThreadDistributor::execute(inThread_zerowvol);
-  ReadDistributor::read(args.inlist, args.beverbose);
+  ReadVolArgs readArgs(args.inlist, args.beverbose);
+  ThreadDistributor::execute(inThread_readVol, &readArgs);
+
 
   if ( args.interactive ) {
 
@@ -762,9 +684,9 @@ int main(int argc, char *argv[]) {
             table.parse(aargc, aargv);
             args.check_save(table);
 
-            WriteDistributor::save(args.inlist, args.beverbose, args.color,
-                                   args.out_filled, args.out_inverted, args.out_mask);
-
+            SaveVolArgs saveArgs(args.inlist, args.beverbose, args.color,
+                                 args.out_filled, args.out_inverted, args.out_mask);
+            ThreadDistributor::execute(inThread_saveVol, &saveArgs);
 
           } else if ( string(aargv[0]) == "apply" ) {
 
@@ -859,8 +781,10 @@ int main(int argc, char *argv[]) {
                     args.radius, args.radiusM, args.minval, args.maxval,
                     run_threads, args.beverbose)
       .process();
-    WriteDistributor::save(args.inlist, args.beverbose, args.color,
-                           args.out_filled, args.out_inverted, args.out_mask);
+
+    SaveVolArgs saveArgs(args.inlist, args.beverbose, args.color,
+                         args.out_filled, args.out_inverted, args.out_mask);
+    ThreadDistributor::execute(inThread_saveVol, &saveArgs);
 
   }
 

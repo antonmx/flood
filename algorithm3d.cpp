@@ -61,8 +61,7 @@ ProcDistributor::ProcDistributor(Volume8U & _ivol, Volume8U & _wvol,
   , picklock(PTHREAD_MUTEX_INITIALIZER)
   , check_again(PTHREAD_COND_INITIALIZER)
   , proc_threads()
-  , tMon(0)
-  , tMon2(0)
+  // , tMon(0)
   , bar( verbose , "processing volume", _ivol.size() )
 {
 
@@ -137,17 +136,20 @@ ProcDistributor::ProcDistributor(Volume8U & _ivol, Volume8U & _wvol,
 }
 
 
-bool ProcDistributor::distribute( Fqueue<Point3D> & pnts ) {
+bool ProcDistributor::distribute( queue<Point3D> & pnts ) {
 
   pthread_mutex_lock( & picklock );
-  const Time::time_point nowSt = Time::now();
   while ( thinwork && ! schedule.size() )
     pthread_cond_wait(&check_again, &picklock);
+
   if (schedule.size()) {
-    pnts = schedule.pop( std::max(schedule.size()/run_threads, ulong(1)) );
+    const size_t psz = std::max(schedule.size()/run_threads, ulong(1)) ;
+    for(int cnt = 0; cnt < psz; cnt++ )
+      pnts.push(schedule.front());
+      schedule.pop();
     thinwork++;
   }
-  tMon += Time::now() - nowSt;
+
   pthread_mutex_unlock( & picklock );
   pthread_cond_signal( & check_again ) ; // do i need it here?
 
@@ -156,9 +158,12 @@ bool ProcDistributor::distribute( Fqueue<Point3D> & pnts ) {
 }
 
 
-void ProcDistributor::collect( Fqueue<Point3D> & add_to_schedule) {
+void ProcDistributor::collect( queue<Point3D> & add_to_schedule) {
   pthread_mutex_lock( & picklock );
-  schedule.push(add_to_schedule);
+  while (add_to_schedule.size()) {
+    schedule.push(add_to_schedule.front());
+    add_to_schedule.pop();
+  }
   thinwork--;
   pthread_mutex_unlock( & picklock );
   pthread_cond_signal( & check_again ) ;
@@ -197,13 +202,15 @@ void * ProcDistributor::in_proc_thread (void * _thread_args) {
   if (!dist)
     throw_error("process thread", "Inappropriate thread function arguments.");
 
-  Fqueue<Point3D> pnts;
+  size_t cnt = 0;
+  queue<Point3D> pnts;
   while ( dist->distribute(pnts)  &&  ! ProcDistributor::stopProcessing ) {
 
-    size_t cnt = 0;
     do {
 
-      Point3D pnt = pnts.pop();
+      Point3D pnt = pnts.front();
+      pnts.pop();
+      cnt++;
       #define spn(a1, a2, a3) ( dist->wvol(pnt + Point3D(a1, a2, a3) ) & CHECKED ?  1l  :  0l )
       const TinyVector<long int, 6> spnv( spn(1, 0, 0), spn(-1, 0, 0),
                                           spn(0, 1, 0), spn( 0,-1, 0),
@@ -218,7 +225,6 @@ void * ProcDistributor::in_proc_thread (void * _thread_args) {
           uint8_t & wal = dist->wvol(pntt);
           if ( ! ( wal & SCHEDULED ) ) {
             pnts.push(pntt);
-            cnt++;
             wal |= SCHEDULED;
            }
          }
@@ -240,7 +246,7 @@ void * ProcDistributor::in_proc_thread (void * _thread_args) {
       }
 
     } while( pnts.size() &&
-             pnts.size() < dist->schedule.size() );
+             pnts.size() < dist->schedule.size() * dist->run_threads );
 
     dist->collect(pnts);
 
@@ -276,8 +282,6 @@ void ProcDistributor::finish_process() {
     throw_error("Process data", "No process are running to finish.");
   for (int ith = 0 ; ith < proc_threads.size() ; ith++)
     pthread_join( proc_threads[ith], 0);
-  prdn(toString(chrono::nanoseconds(tMon).count()/1000000000.0));
-  prdn(toString(chrono::nanoseconds(tMon2).count()/1000000000.0));
   bar.update();
   proc_threads.clear();
 }
@@ -290,7 +294,111 @@ void ProcDistributor::process() {
 
 
 
+/*
 
+template<class T> class Fqueue {
+
+private:
+
+  struct Fitem {
+    T val;
+    Fitem * next;
+    Fitem(T _val, Fitem * _next) : val(_val), next(_next) {}
+  };
+
+  size_t sz;
+  Fitem * first;
+  Fitem * last;
+
+  Fqueue(size_t _sz, Fitem * _first, Fitem * _last)
+   : sz(_sz)
+   , first(_first)
+   , last(_last)
+  {
+    if (sz)
+      last->next=0;
+  }
+
+public:
+
+  Fqueue()
+   : Fqueue(0, 0, 0)
+  {}
+
+  ~Fqueue() {
+    while(sz--) {
+      Fitem * del = first;
+      first = del->next;
+      delete del;
+    }
+  }
+
+  const size_t & size() const { return sz; }
+
+  Fqueue & push(const T& el) {
+    Fitem * ni = new Fitem(el, 0);
+    if (sz)
+      last->next = ni;
+    last = ni;
+    if (!sz)
+      first = last;
+    sz++;
+    return * this;
+  }
+
+  Fqueue & push(Fqueue & addMe) {
+    if ( ! addMe.sz )
+      return * this;
+    if(sz)
+      last->next = addMe.first;
+    last = addMe.last;
+    if (!sz)
+      first = addMe.first;
+    sz += addMe.sz;
+    addMe = Fqueue();
+    return * this;
+  }
+
+  T pop() {
+    if (!sz)
+      return T();
+    Fitem * del = first;
+    T ret = del->val;
+    first = del->next;
+    last->next = first;
+    delete del;
+    sz--;
+    return ret;
+  }
+
+  Fqueue & pop(const size_t nit) {
+
+    if ( ! nit  ||  ! sz )
+      return *this;
+    if (nit>=sz) {
+      Fqueue * nq =new Fqueue(sz, first, last);
+      *this = Fqueue();
+      return *nq;
+    }
+
+    Fitem * cur = first;
+    for (int idx=1 ; idx<nit ; idx++)
+      cur = cur->next;
+    last->next = cur->next;
+    Fqueue * nq = new Fqueue(nit, first, cur);
+    first = last->next;
+    last->next = 0;
+    sz -= nit;
+    return *nq;
+
+  }
+
+};
+
+
+
+
+ */
 
 
 

@@ -6,107 +6,6 @@
 #include <queue>
 
 
-template<class ItemType> class Fqueue {
-
-private:
-
-  struct Fitem {
-    ItemType val;
-    Fitem * next;
-    Fitem( ItemType _val, Fitem * _next) : val(_val), next(_next) {}
-  };
-
-  size_t sz;
-  Fitem * first;
-  Fitem * last;
-
-  Fqueue(size_t _sz, Fitem * _first, Fitem * _last)
-    : sz(_sz)
-    , first(_first)
-    , last(_last)
-  {
-    if (sz)
-      last->next=0;
-  }
-
-public:
-
-  Fqueue()
-   : Fqueue(0, 0, 0)
-  {}
-
-  ~Fqueue() {
-    while(sz--) {
-      Fitem * del = first;
-      first = del->next;
-      delete del;
-    }
-  }
-
-  const size_t & size() const { return sz; }
-
-  Fqueue & push(const ItemType& el) {
-    Fitem * ni = new Fitem(el, 0);
-    if (sz)
-      last->next = ni;
-    last = ni;
-    if (!sz)
-      first = last;
-    sz++;
-    return * this;
-  }
-
-  Fqueue & push(Fqueue & addMe) {
-    if ( ! addMe.sz )
-      return * this;
-    if(sz)
-      last->next = addMe.first;
-    last = addMe.last;
-    if (!sz)
-      first = addMe.first;
-    sz += addMe.sz;
-    addMe = Fqueue();
-    return * this;
-  }
-
-  ItemType pop() {
-    if (!sz)
-      return ItemType();
-    Fitem * del = first;
-        ItemType ret = del->val;
-    first = del->next;
-    last->next = first;
-    delete del;
-    sz--;
-    return ret;
-  }
-
-  Fqueue & pop(const size_t nit) {
-
-    if ( ! nit  ||  ! sz )
-      return *this;
-    if (nit>=sz) {
-      Fqueue * nq =new Fqueue(sz, first, last);
-      *this = Fqueue();
-      return *nq;
-    }
-
-    Fitem * cur = first;
-    for (int idx=1 ; idx<nit ; idx++)
-      cur = cur->next;
-    last->next = cur->next;
-    Fqueue * nq = new Fqueue(nit, first, cur);
-    first = last->next;
-    last->next = 0;
-    sz -= nit;
-    return *nq;
-
-  }
-
-};
-
-
-
 class ProcDistributor {
 
 private:
@@ -115,7 +14,7 @@ private:
   Volume8U & wvol;
   const Shape3D volsh;
 
-  Fqueue<Point3D> schedule;
+  std::queue<Point3D> schedule;
   int thinwork;
   ulong run_threads;
 
@@ -131,8 +30,7 @@ private:
   pthread_mutex_t picklock;
   pthread_cond_t check_again;
   std::vector<pthread_t> proc_threads;
-  Time::duration tMon;
-  Time::duration tMon2;
+  //Time::duration tMon;
   // // Time::time_point nowSt = Time::now();
   // // tMon += Time::now() - nowSt;
   // // prdn(toString(chrono::nanoseconds(tMon ).count()/1000000000.0));
@@ -141,8 +39,8 @@ private:
   int checkMe(const Point3D & pnt, const blitz::TinyVector<long int, 6> & spnv);
 
   static void * in_proc_thread (void * _thread_args);
-  bool distribute( Fqueue<Point3D> & pnts );
-  void collect( Fqueue<Point3D> & pnts);
+  bool distribute( std::queue<Point3D> & pnts );
+  void collect( std::queue<Point3D> & pnts);
 
 public:
 

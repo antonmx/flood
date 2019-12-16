@@ -14,10 +14,6 @@ private:
   Volume8U & wvol;
   const Shape3D volsh;
 
-  std::queue<Point3D> schedule;
-  int thinwork;
-  ulong run_threads;
-
   const int radius;
   const int radiusM;
   const uint8_t minval;
@@ -26,10 +22,14 @@ private:
   blitz::Array < std::vector<Point3D>, 6 > newPoints;
   blitz::Array < std::vector<Point3D>, 6 > markPoints;
 
+  std::queue<Point3D> schedule;
+  int thinwork;
+  ulong run_threads;
   pthread_mutex_t proglock;
   pthread_mutex_t picklock;
   pthread_cond_t check_again;
   std::vector<pthread_t> proc_threads;
+  const size_t updateBlock;
   //Time::duration tMon;
   // // Time::time_point nowSt = Time::now();
   // // tMon += Time::now() - nowSt;

@@ -48,19 +48,20 @@ ProcDistributor::ProcDistributor(Volume8U & _ivol, Volume8U & _wvol,
   : ivol(_ivol)
   , wvol(_wvol)
   , volsh(_ivol.shape())
-  , schedule()
-  , thinwork(0)
-  , run_threads(_run_threads)
   , radius(_radius)
   , radiusM(_radiusM)
   , minval(_minval)
   , maxval(_maxval)
   , newPoints (2,2,2,2,2,2)
   , markPoints(2,2,2,2,2,2)
+  , schedule()
+  , thinwork(0)
+  , run_threads(_run_threads)
   , proglock(PTHREAD_MUTEX_INITIALIZER)
   , picklock(PTHREAD_MUTEX_INITIALIZER)
   , check_again(PTHREAD_COND_INITIALIZER)
   , proc_threads()
+  , updateBlock(wvol.size()/(1000*run_threads))
   // , tMon(0)
   , bar( verbose , "processing volume", _ivol.size() )
 {
@@ -202,7 +203,7 @@ void * ProcDistributor::in_proc_thread (void * _thread_args) {
   if (!dist)
     throw_error("process thread", "Inappropriate thread function arguments.");
 
-  size_t cnt = 0;
+  size_t cnt(dist->updateBlock);
   queue<Point3D> pnts;
   while ( dist->distribute(pnts)  &&  ! ProcDistributor::stopProcessing ) {
 
@@ -210,7 +211,7 @@ void * ProcDistributor::in_proc_thread (void * _thread_args) {
 
       Point3D pnt = pnts.front();
       pnts.pop();
-      cnt++;
+      cnt--;
       #define spn(a1, a2, a3) ( dist->wvol(pnt + Point3D(a1, a2, a3) ) & CHECKED ?  1l  :  0l )
       const TinyVector<long int, 6> spnv( spn(1, 0, 0), spn(-1, 0, 0),
                                           spn(0, 1, 0), spn( 0,-1, 0),
@@ -238,11 +239,11 @@ void * ProcDistributor::in_proc_thread (void * _thread_args) {
 
       }
 
-      if (cnt * 10000 > dist->ivol.size() ) {
+      if (!cnt) {
         pthread_mutex_lock( & dist->proglock );
-        dist->bar.update( dist->bar.progress() + cnt );
+        dist->bar.update( dist->bar.progress() + dist->updateBlock );
         pthread_mutex_unlock( & dist->proglock );
-        cnt = 0;
+        cnt = dist->updateBlock;
       }
 
     } while( pnts.size() &&

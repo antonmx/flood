@@ -253,6 +253,9 @@ void * ProcDistributor::in_proc_thread (void * _thread_args) {
 
   }
 
+  pthread_mutex_lock( & dist->proglock );
+  dist->bar.update( dist->bar.progress() + dist->updateBlock - cnt );
+  pthread_mutex_unlock( & dist->proglock );
   return 0;
 
 }

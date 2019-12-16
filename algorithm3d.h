@@ -6,14 +6,14 @@
 #include <queue>
 
 
-template<class T> class Fqueue {
+template<class ItemType> class Fqueue {
 
 private:
 
   struct Fitem {
-    T val;
+    ItemType val;
     Fitem * next;
-    Fitem(T _val, Fitem * _next) : val(_val), next(_next) {}
+    Fitem( ItemType _val, Fitem * _next) : val(_val), next(_next) {}
   };
 
   size_t sz;
@@ -21,10 +21,10 @@ private:
   Fitem * last;
 
   Fqueue(size_t _sz, Fitem * _first, Fitem * _last)
-   : sz(_sz)
-   , first(_first)
-   , last(_last)
-  { 
+    : sz(_sz)
+    , first(_first)
+    , last(_last)
+  {
     if (sz)
       last->next=0;
   }
@@ -45,7 +45,7 @@ public:
 
   const size_t & size() const { return sz; }
 
-  Fqueue & push(const T& el) {
+  Fqueue & push(const ItemType& el) {
     Fitem * ni = new Fitem(el, 0);
     if (sz)
       last->next = ni;
@@ -69,17 +69,17 @@ public:
     return * this;
   }
 
-  T pop() {
+  ItemType pop() {
     if (!sz)
-      return T();
+      return ItemType();
     Fitem * del = first;
-    T ret = del->val;
+        ItemType ret = del->val;
     first = del->next;
     last->next = first;
     delete del;
     sz--;
     return ret;
-  }  
+  }
 
   Fqueue & pop(const size_t nit) {
 
@@ -94,15 +94,15 @@ public:
     Fitem * cur = first;
     for (int idx=1 ; idx<nit ; idx++)
       cur = cur->next;
-    last->next = cur->next; 
+    last->next = cur->next;
     Fqueue * nq = new Fqueue(nit, first, cur);
     first = last->next;
     last->next = 0;
     sz -= nit;
     return *nq;
-  
+
   }
-    
+
 };
 
 
@@ -133,12 +133,16 @@ private:
   std::vector<pthread_t> proc_threads;
   Time::duration tMon;
   Time::duration tMon2;
+  // // Time::time_point nowSt = Time::now();
+  // // tMon += Time::now() - nowSt;
+  // // prdn(toString(chrono::nanoseconds(tMon ).count()/1000000000.0));
+
 
   int checkMe(const Point3D & pnt, const blitz::TinyVector<long int, 6> & spnv);
 
   static void * in_proc_thread (void * _thread_args);
   bool distribute( Fqueue<Point3D> & pnts );
-  void collect( Fqueue<Point3D> & pnts, Fqueue< blitz::TinyVector<long int, 6> > & spns);
+  void collect( Fqueue<Point3D> & pnts);
 
 public:
 
@@ -161,3 +165,4 @@ public:
 
 
 #endif // _H_ALG3D_H_
+

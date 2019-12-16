@@ -99,8 +99,8 @@ struct clargs {
     , radius(0)
     , radiusM(0)
     , color(0)
-    , minval(-1)
-    , maxval(-1)
+    , minval(0)
+    , maxval(255)
     , proc_table()
     , save_table()
     , table("3D advanced flood fill.",
@@ -616,16 +616,7 @@ int main(int argc, char *argv[]) {
 
   clargs args(argc, argv);
 
-  struct sigaction act2;
-  act2.sa_handler = sig2handler;
-  sigaction(SIGUSR2, &act2, NULL);
-
-  if (args.beverbose)
-    printf("My PID is %i. You can send me USR2 signal to save current"
-           " mask slices through the first start point.\n", getpid() );
-
   const Shape2D imgsh = ImageSizes(args.inlist[0]);
-
   const uint mrad = max(args.radius, args.radiusM);
   volsh=Shape3D(args.inlist.size(), imgsh(0), imgsh(1));
   Volume8U xivol( Shape3D(volsh(0)+2*mrad, volsh(1)+2*mrad, volsh(2)+2*mrad) );
@@ -638,7 +629,6 @@ int main(int argc, char *argv[]) {
   ThreadDistributor::execute(inThread_zerowvol);
   ReadVolArgs readArgs(args.inlist, args.beverbose);
   ThreadDistributor::execute(inThread_readVol, &readArgs);
-
 
   if ( args.interactive ) {
 
@@ -776,6 +766,14 @@ int main(int argc, char *argv[]) {
     }
 
   } else {
+
+    struct sigaction act2;
+    act2.sa_handler = sig2handler;
+    sigaction(SIGUSR2, &act2, NULL);
+
+    if (args.beverbose)
+      printf("My PID is %i. You can send me USR2 signal to save current"
+             " mask slices through the first start point.\n", getpid() );
 
     ProcDistributor(ivol, wvol, args.start, args.stop,
                     args.radius, args.radiusM, args.minval, args.maxval,

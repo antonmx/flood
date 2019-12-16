@@ -185,8 +185,7 @@ int ProcDistributor::checkMe(const Point3D & pnt, const blitz::TinyVector<long i
 
     if ( ! ( wal & ISGOOD ) ) {
       const uint8_t & ial=ivol(tpnt);
-      const bool pass = ( minval < 0  ||  ial >= minval ) &&
-                        ( maxval < 0  ||  ial <= maxval ) ;
+      const bool pass   =   ial >= minval  &&  ial <= maxval;
       wal |= pass ? ISGOOD : ISBAD ; // can I do it in multithreaded?
       if (!pass)
         return 0;
@@ -219,7 +218,6 @@ void * ProcDistributor::in_proc_thread (void * _thread_args) {
       #undef spn
 
       if ( dist->checkMe(pnt, spnv) ) {
-
         array<Point3D,6>::const_iterator itcs = crossPoints.begin();
         while(itcs < crossPoints.end()) {
           const Point3D pntt = pnt + *itcs++;
